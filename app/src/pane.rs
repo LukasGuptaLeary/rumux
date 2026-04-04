@@ -22,6 +22,7 @@ pub struct Pane {
     pub can_zoom: bool,
     rename_state: Option<(usize, TextInputState)>,
     rename_focus: Option<FocusHandle>,
+    _rename_focus_sub: Option<gpui::Subscription>,
     agent_menu: Option<Entity<DropdownMenu>>,
     tab_context_menu: Option<(usize, Entity<DropdownMenu>)>,
     pub needs_focus: bool,
@@ -38,6 +39,7 @@ impl Pane {
             can_zoom: false,
             rename_state: None,
             rename_focus: None,
+            _rename_focus_sub: None,
             agent_menu: None,
             tab_context_menu: None,
             needs_focus: true,
@@ -140,13 +142,18 @@ impl Pane {
     }
 
     fn start_rename(&mut self, idx: usize, cx: &mut Context<Self>) {
-        // Close any open menus first
+        // Close any existing rename or menus first
         self.agent_menu = None;
         self.tab_context_menu = None;
+        self.rename_state = None;
+        self.rename_focus = None;
+        self._rename_focus_sub = None;
 
         let current = self.tab_name(idx);
+        let focus = cx.focus_handle();
         self.rename_state = Some((idx, TextInputState::new(&current)));
-        self.rename_focus = Some(cx.focus_handle());
+        self.rename_focus = Some(focus);
+        // on_focus_out subscription will be set up in render() where we have Window
         cx.notify();
     }
 
@@ -157,15 +164,17 @@ impl Pane {
                 self.names[idx] = if new.is_empty() { None } else { Some(new) };
             }
         }
-        self.rename_state = None;
-        self.rename_focus = None;
-        self.needs_focus = true;
-        cx.notify();
+        self.clear_rename(cx);
     }
 
     fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        self.clear_rename(cx);
+    }
+
+    fn clear_rename(&mut self, cx: &mut Context<Self>) {
         self.rename_state = None;
         self.rename_focus = None;
+        self._rename_focus_sub = None;
         self.needs_focus = true;
         cx.notify();
     }
@@ -288,14 +297,13 @@ impl Pane {
 
 impl Render for Pane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Cancel rename if its focus handle lost focus (user clicked elsewhere)
-        if self.rename_state.is_some() {
+        // Set up on_focus_out subscription for rename (needs window, only available in render)
+        if self.rename_state.is_some() && self._rename_focus_sub.is_none() {
             if let Some(ref focus) = self.rename_focus {
-                if !focus.is_focused(window) && !self.needs_focus {
-                    // Focus moved away — cancel the rename
-                    self.rename_state = None;
-                    self.rename_focus = None;
-                }
+                let sub = cx.on_focus_out(focus, window, |pane: &mut Self, _event, _window, cx| {
+                    pane.clear_rename(cx);
+                });
+                self._rename_focus_sub = Some(sub);
             }
         }
 

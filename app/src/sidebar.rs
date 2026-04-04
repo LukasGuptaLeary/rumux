@@ -10,6 +10,7 @@ pub struct Sidebar {
     app_state: Entity<AppState>,
     rename_state: Option<(usize, TextInputState)>,
     rename_focus: Option<FocusHandle>,
+    _rename_focus_sub: Option<gpui::Subscription>,
     context_menu: Option<(usize, Entity<DropdownMenu>)>,
 }
 
@@ -19,15 +20,18 @@ impl Sidebar {
             app_state,
             rename_state: None,
             rename_focus: None,
+            _rename_focus_sub: None,
             context_menu: None,
         }
     }
 
     fn start_rename(&mut self, idx: usize, name: &str, cx: &mut Context<Self>) {
+        self.clear_rename(cx);
+        self.context_menu = None;
         let focus = cx.focus_handle();
         self.rename_state = Some((idx, TextInputState::new(name)));
         self.rename_focus = Some(focus);
-        self.context_menu = None;
+        // on_focus_out subscription set up in render() where we have Window
         cx.notify();
     }
 
@@ -46,14 +50,17 @@ impl Sidebar {
                 });
             }
         }
-        self.rename_state = None;
-        self.rename_focus = None;
-        cx.notify();
+        self.clear_rename(cx);
     }
 
     fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        self.clear_rename(cx);
+    }
+
+    fn clear_rename(&mut self, cx: &mut Context<Self>) {
         self.rename_state = None;
         self.rename_focus = None;
+        self._rename_focus_sub = None;
         cx.notify();
     }
 
@@ -140,13 +147,13 @@ impl Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Cancel rename if focus moved away
-        if self.rename_state.is_some() {
+        // Set up on_focus_out for rename (needs window, only available in render)
+        if self.rename_state.is_some() && self._rename_focus_sub.is_none() {
             if let Some(ref focus) = self.rename_focus {
-                if !focus.is_focused(window) {
-                    self.rename_state = None;
-                    self.rename_focus = None;
-                }
+                let sub = cx.on_focus_out(focus, window, |sidebar: &mut Self, _event, _window, cx| {
+                    sidebar.clear_rename(cx);
+                });
+                self._rename_focus_sub = Some(sub);
             }
         }
 
