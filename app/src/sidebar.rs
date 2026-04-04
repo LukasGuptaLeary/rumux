@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::IconName;
+use gpui_component::Sizable;
 use gpui_component::input::{Input, InputEvent, InputState};
 
 use crate::app_state::AppState;
@@ -129,8 +130,7 @@ impl Render for Sidebar {
                         Input::new(editor)
                             .appearance(false)
                             .bordered(false)
-                            .h(px(20.0))
-                            ,
+                            .xsmall(),
                     )
                 } else {
                     div()

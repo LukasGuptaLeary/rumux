@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::IconName;
+use gpui_component::Sizable;
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_terminal::TerminalView;
 
@@ -259,8 +260,7 @@ impl Render for Pane {
                         Input::new(editor)
                             .appearance(false)
                             .bordered(false)
-                            .h(px(22.0))
-                            ,
+                            .xsmall(),
                     );
                 }
             } else {
