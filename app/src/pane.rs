@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_terminal::TerminalView;
 
+use crate::root_view::{SplitDown, SplitRight};
 use crate::terminal_surface::spawn_terminal_view;
 use crate::theme;
 
@@ -34,15 +35,19 @@ impl Pane {
         }
     }
 
-    pub fn close_active_terminal(&mut self) -> bool {
+    pub fn close_terminal(&mut self, idx: usize) -> bool {
         if self.terminals.len() <= 1 {
             return true; // pane should be removed
         }
-        self.terminals.remove(self.active_idx);
+        self.terminals.remove(idx);
         if self.active_idx >= self.terminals.len() {
             self.active_idx = self.terminals.len() - 1;
         }
         false
+    }
+
+    pub fn close_active_terminal(&mut self) -> bool {
+        self.close_terminal(self.active_idx)
     }
 
     pub fn activate_terminal(&mut self, idx: usize) {
@@ -82,61 +87,130 @@ impl Render for Pane {
 
         let mut container = div().size_full().flex().flex_col().track_focus(&self.focus_handle);
 
-        // Tab bar (only when multiple terminals)
-        if self.terminals.len() > 1 {
-            let mut tab_bar = div()
+        // Header bar with tabs + action buttons
+        let mut header = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .h(px(30.0))
+            .bg(rgb(theme::BG_SECONDARY))
+            .border_b_1()
+            .border_color(rgb(theme::BORDER));
+
+        // Terminal tabs
+        let mut tabs_area = div().flex().flex_row().flex_1().overflow_hidden();
+        for i in 0..self.terminals.len() {
+            let is_active = i == self.active_idx;
+            let mut tab = div()
+                .id(ElementId::Name(format!("term-tab-{i}").into()))
                 .flex()
-                .flex_row()
-                .h(px(28.0))
-                .bg(rgb(theme::BG_SECONDARY))
-                .border_b_1()
-                .border_color(rgb(theme::BORDER));
+                .items_center()
+                .gap(px(6.0))
+                .px(px(10.0))
+                .h_full()
+                .cursor_pointer()
+                .text_size(px(12.0))
+                .border_r_1()
+                .border_color(rgb(theme::BORDER))
+                .on_mouse_down(MouseButton::Left, {
+                    cx.listener(move |pane, _event, _window, cx| {
+                        pane.activate_terminal(i);
+                        cx.notify();
+                    })
+                });
 
-            for i in 0..self.terminals.len() {
-                let is_active = i == self.active_idx;
-                let mut tab = div()
-                    .px(px(12.0))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .cursor_pointer()
-                    .text_size(px(12.0))
-                    .on_mouse_down(MouseButton::Left, {
-                        cx.listener(move |pane, _event, _window, cx| {
-                            pane.activate_terminal(i);
-                            cx.notify();
-                        })
-                    });
-
-                if is_active {
-                    tab = tab.bg(rgb(theme::BG_PRIMARY)).text_color(rgb(theme::TEXT_PRIMARY));
-                } else {
-                    tab = tab.text_color(rgb(theme::TEXT_DIM));
-                }
-
-                tab_bar = tab_bar.child(tab.child(format!("Terminal {}", i + 1)));
+            if is_active {
+                tab = tab.bg(rgb(theme::BG_PRIMARY)).text_color(rgb(theme::TEXT_PRIMARY));
+            } else {
+                tab = tab.text_color(rgb(theme::TEXT_DIM));
             }
 
-            // + button
-            tab_bar = tab_bar.child(
+            tab = tab.child(format!("Terminal {}", i + 1));
+
+            // Close button per tab (only if multiple)
+            if self.terminals.len() > 1 {
+                tab = tab.child(
+                    div()
+                        .id(ElementId::Name(format!("term-close-{i}").into()))
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::TEXT_DIM))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(rgb(theme::ACCENT_RED)))
+                        .on_mouse_down(MouseButton::Left, {
+                            cx.listener(move |pane, _event, _window, cx| {
+                                pane.close_terminal(i);
+                                cx.notify();
+                            })
+                        })
+                        .child("x"),
+                );
+            }
+
+            tabs_area = tabs_area.child(tab);
+        }
+        header = header.child(tabs_area);
+
+        // Action buttons (right side of header)
+        let actions = div()
+            .flex()
+            .items_center()
+            .gap(px(2.0))
+            .px(px(4.0))
+            .flex_shrink_0()
+            // New terminal
+            .child(
                 div()
-                    .px(px(8.0))
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .cursor_pointer()
-                    .text_size(px(14.0))
+                    .id("pane-new-term")
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(3.0))
+                    .text_size(px(12.0))
                     .text_color(rgb(theme::TEXT_DIM))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)))
                     .on_mouse_down(MouseButton::Left, cx.listener(|pane, _event, _window, cx| {
                         pane.add_terminal(&mut **cx);
                         cx.notify();
                     }))
                     .child("+"),
+            )
+            // Split right
+            .child(
+                div()
+                    .id("pane-split-h")
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(3.0))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::TEXT_DIM))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|_pane, _event, window, cx| {
+                        window.dispatch_action(Box::new(SplitRight), cx);
+                    }))
+                    .child("||"),
+            )
+            // Split down
+            .child(
+                div()
+                    .id("pane-split-v")
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(3.0))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::TEXT_DIM))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|_pane, _event, window, cx| {
+                        window.dispatch_action(Box::new(SplitDown), cx);
+                    }))
+                    .child("="),
             );
 
-            container = container.child(tab_bar);
-        }
+        header = header.child(actions);
+        container = container.child(header);
 
+        // Terminal content
         container = container.child(
             div().flex_1().overflow_hidden().child(self.active_terminal().clone()),
         );

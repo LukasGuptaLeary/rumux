@@ -57,6 +57,64 @@ impl Workspace {
         collect_panes(&self.layout, &mut result);
         result
     }
+
+    fn render_layout_node(&self, node: &LayoutNode, cx: &mut Context<Self>) -> Div {
+        match node {
+            LayoutNode::Leaf(pane) => {
+                let is_focused = pane == &self.focused_pane;
+                let pane_clone = pane.clone();
+                let mut d = div()
+                    .size_full()
+                    .on_mouse_down(MouseButton::Left, {
+                        cx.listener(move |ws, _event, _window, cx| {
+                            ws.focused_pane = pane_clone.clone();
+                            cx.notify();
+                        })
+                    });
+                if is_focused {
+                    d = d.border_1().border_color(rgb(theme::ACCENT));
+                }
+                d.child(pane.clone())
+            }
+            LayoutNode::Split {
+                direction,
+                first,
+                second,
+                ..
+            } => {
+                let is_horizontal = *direction == SplitDirection::Horizontal;
+                let first_child = self.render_layout_node(first, cx);
+                let second_child = self.render_layout_node(second, cx);
+
+                let mut divider = div()
+                    .bg(rgb(theme::DIVIDER))
+                    .flex_shrink_0();
+                if is_horizontal {
+                    divider = divider
+                        .w(px(4.0))
+                        .h_full()
+                        .cursor(CursorStyle::ResizeLeftRight);
+                } else {
+                    divider = divider
+                        .h(px(4.0))
+                        .w_full()
+                        .cursor(CursorStyle::ResizeUpDown);
+                }
+
+                let mut container = div().size_full().flex();
+                if is_horizontal {
+                    container = container.flex_row();
+                } else {
+                    container = container.flex_col();
+                }
+
+                container
+                    .child(first_child.flex_1().overflow_hidden())
+                    .child(divider)
+                    .child(second_child.flex_1().overflow_hidden())
+            }
+        }
+    }
 }
 
 fn collect_panes(node: &LayoutNode, out: &mut Vec<Entity<Pane>>) {
@@ -121,51 +179,11 @@ pub fn remove_pane_from_layout(node: LayoutNode, target: &Entity<Pane>) -> Optio
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let layout = self.render_layout_node(&self.layout, cx);
         div()
             .size_full()
             .bg(rgb(theme::BG_PRIMARY))
-            .child(render_layout(&self.layout, &self.focused_pane))
-    }
-}
-
-fn render_layout(node: &LayoutNode, focused: &Entity<Pane>) -> Div {
-    match node {
-        LayoutNode::Leaf(pane) => {
-            let mut d = div().size_full();
-            if pane == focused {
-                d = d.border_1().border_color(rgb(theme::ACCENT));
-            }
-            d.child(pane.clone())
-        }
-        LayoutNode::Split {
-            direction,
-            first,
-            second,
-            ..
-        } => {
-            let is_horizontal = *direction == SplitDirection::Horizontal;
-            let first_child = render_layout(first, focused);
-            let second_child = render_layout(second, focused);
-
-            let mut divider = div().bg(rgb(theme::DIVIDER)).flex_shrink_0();
-            if is_horizontal {
-                divider = divider.w(px(4.0)).h_full();
-            } else {
-                divider = divider.h(px(4.0)).w_full();
-            }
-
-            let mut container = div().size_full().flex();
-            if is_horizontal {
-                container = container.flex_row();
-            } else {
-                container = container.flex_col();
-            }
-
-            container
-                .child(first_child.flex_1().overflow_hidden())
-                .child(divider)
-                .child(second_child.flex_1().overflow_hidden())
-        }
+            .child(layout)
     }
 }

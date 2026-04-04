@@ -5,11 +5,45 @@ use crate::theme;
 
 pub struct Sidebar {
     app_state: Entity<AppState>,
+    renaming_idx: Option<usize>,
+    rename_text: String,
 }
 
 impl Sidebar {
     pub fn new(app_state: Entity<AppState>) -> Self {
-        Self { app_state }
+        Self {
+            app_state,
+            renaming_idx: None,
+            rename_text: String::new(),
+        }
+    }
+
+    fn start_rename(&mut self, idx: usize, current_name: &str) {
+        self.renaming_idx = Some(idx);
+        self.rename_text = current_name.to_string();
+    }
+
+    fn finish_rename(&mut self, cx: &mut Context<Self>) {
+        if let Some(idx) = self.renaming_idx.take() {
+            let new_name = self.rename_text.trim().to_string();
+            if !new_name.is_empty() {
+                self.app_state.update(cx, |state, cx| {
+                    if idx < state.workspaces.len() {
+                        state.workspaces[idx].update(cx, |ws, cx| {
+                            ws.name = new_name;
+                            cx.notify();
+                        });
+                    }
+                    cx.notify();
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        self.renaming_idx = None;
+        cx.notify();
     }
 }
 
@@ -26,8 +60,10 @@ impl Render for Sidebar {
             let name = ws.name.clone();
             let is_active = i == active_idx;
             let unread = ws.unread_count;
+            let is_renaming = self.renaming_idx == Some(i);
 
             let mut tab = div()
+                .id(ElementId::Name(format!("ws-tab-{i}").into()))
                 .px(px(12.0))
                 .py(px(8.0))
                 .cursor_pointer()
@@ -38,7 +74,8 @@ impl Render for Sidebar {
                             state.set_active_workspace(i, cx);
                         });
                     })
-                });
+                })
+;
 
             if is_active {
                 tab = tab
@@ -47,32 +84,74 @@ impl Render for Sidebar {
                     .border_color(rgb(theme::ACCENT));
             }
 
-            let mut name_el = div().text_size(px(13.0));
-            if is_active {
-                name_el = name_el
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(theme::TEXT_PRIMARY));
-            } else {
-                name_el = name_el.text_color(rgb(theme::TEXT_SECONDARY));
-            }
-            name_el = name_el.child(name);
-
-            let mut row = div().flex().justify_between().child(name_el);
-
-            if unread > 0 {
-                row = row.child(
+            // Content row
+            let content = if is_renaming {
+                // Rename input
+                div().child(
                     div()
-                        .px(px(5.0))
-                        .bg(rgb(theme::ACCENT_RED))
-                        .text_color(rgb(0xffffff))
-                        .text_size(px(10.0))
+                        .px(px(4.0))
+                        .py(px(1.0))
+                        .bg(rgb(theme::BG_SURFACE))
+                        .border_1()
+                        .border_color(rgb(theme::ACCENT))
+                        .rounded(px(3.0))
+                        .text_size(px(13.0))
+                        .text_color(rgb(theme::TEXT_PRIMARY))
+                        .child(self.rename_text.clone()),
+                )
+            } else {
+                let mut name_el = div().text_size(px(13.0)).flex_1().overflow_hidden();
+                if is_active {
+                    name_el = name_el
                         .font_weight(FontWeight::SEMIBOLD)
-                        .rounded(px(8.0))
-                        .child(format!("{unread}")),
-                );
-            }
+                        .text_color(rgb(theme::TEXT_PRIMARY));
+                } else {
+                    name_el = name_el.text_color(rgb(theme::TEXT_SECONDARY));
+                }
+                name_el = name_el.child(name);
 
-            tab = tab.child(row);
+                let mut row = div().flex().items_center().gap(px(4.0)).child(name_el);
+
+                // Unread badge
+                if unread > 0 {
+                    row = row.child(
+                        div()
+                            .px(px(5.0))
+                            .bg(rgb(theme::ACCENT_RED))
+                            .text_color(rgb(0xffffff))
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .rounded(px(8.0))
+                            .child(format!("{unread}")),
+                    );
+                }
+
+                // Close button
+                if ws_count > 1 {
+                    row = row.child(
+                        div()
+                            .id(ElementId::Name(format!("ws-close-{i}").into()))
+                            .px(px(4.0))
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::TEXT_DIM))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(theme::ACCENT_RED)))
+                            .on_mouse_down(MouseButton::Left, {
+                                let app_state = self.app_state.clone();
+                                cx.listener(move |_sidebar, _event, _window, cx| {
+                                    app_state.update(cx, |state, cx| {
+                                        state.close_workspace(i, cx);
+                                    });
+                                })
+                            })
+                            .child("x"),
+                    );
+                }
+
+                row
+            };
+
+            tab = tab.child(content);
             tabs = tabs.child(tab);
         }
 
@@ -85,6 +164,7 @@ impl Render for Sidebar {
             .bg(rgb(theme::BG_SECONDARY))
             .border_r_1()
             .border_color(rgb(theme::BORDER))
+            // Header
             .child(
                 div()
                     .px(px(12.0))
@@ -94,7 +174,9 @@ impl Render for Sidebar {
                     .text_color(rgb(theme::TEXT_DIM))
                     .child("WORKSPACES"),
             )
+            // Tabs
             .child(tabs)
+            // New workspace button
             .child(
                 div()
                     .p(px(8.0))
@@ -102,6 +184,7 @@ impl Render for Sidebar {
                     .border_color(rgb(theme::BORDER))
                     .child(
                         div()
+                            .id("new-workspace-btn")
                             .w_full()
                             .py(px(6.0))
                             .rounded(px(4.0))
@@ -110,6 +193,7 @@ impl Render for Sidebar {
                             .text_size(px(12.0))
                             .text_align(TextAlign::Center)
                             .cursor_pointer()
+                            .hover(|s| s.bg(rgb(theme::DIVIDER)))
                             .on_mouse_down(MouseButton::Left, {
                                 let app_state = self.app_state.clone();
                                 cx.listener(move |_sidebar, _event, _window, cx| {
