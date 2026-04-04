@@ -303,8 +303,14 @@ impl Render for Pane {
         // Set up on_focus_out subscription for rename (needs window, only available in render)
         if self.rename_state.is_some() && self._rename_focus_sub.is_none() {
             if let Some(ref focus) = self.rename_focus {
-                let sub = cx.on_focus_out(focus, window, |pane: &mut Self, _event, _window, cx| {
+                let sub = cx.on_focus_out(focus, window, |pane: &mut Self, _event, window, cx| {
                     pane.clear_rename(cx);
+                    // Immediately focus the terminal so the click that
+                    // dismissed the rename also lands in the terminal
+                    pane.active_terminal()
+                        .read(cx)
+                        .focus_handle()
+                        .focus(window);
                 });
                 self._rename_focus_sub = Some(sub);
             }
