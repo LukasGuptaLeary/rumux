@@ -27,9 +27,11 @@ impl Sidebar {
     fn start_rename(&mut self, idx: usize, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_rename();
 
+        let name_owned = name.to_string();
         let editor = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
-            state.set_value(name.to_string(), window, cx);
+            state.set_value(&name_owned, window, cx);
+            state.focus(window, cx);
             state
         });
 
@@ -123,7 +125,13 @@ impl Render for Sidebar {
 
             let content = if is_renaming {
                 if let Some(ref editor) = self.rename_editor {
-                    div().child(Input::new(editor).appearance(false).bordered(false))
+                    div().child(
+                        Input::new(editor)
+                            .appearance(false)
+                            .bordered(false)
+                            .h(px(20.0))
+                            ,
+                    )
                 } else {
                     div()
                 }

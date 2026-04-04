@@ -144,7 +144,8 @@ impl Pane {
         let current = self.tab_name(idx);
         let editor = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
-            state.set_value(current, window, cx);
+            state.set_value(&current, window, cx);
+            state.focus(window, cx);
             state
         });
 
@@ -255,7 +256,11 @@ impl Render for Pane {
             if is_renaming {
                 if let Some(ref editor) = self.rename_editor {
                     tab = tab.child(
-                        Input::new(editor).appearance(false).bordered(false),
+                        Input::new(editor)
+                            .appearance(false)
+                            .bordered(false)
+                            .h(px(22.0))
+                            ,
                     );
                 }
             } else {
