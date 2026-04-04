@@ -200,4 +200,13 @@ impl AppState {
             eprintln!("Failed to save session: {e}");
         }
     }
+
+    pub fn write_to_focused_terminal(&self, text: &str, cx: &mut Context<Self>) {
+        let ws = self.active_workspace().clone();
+        let pane = ws.read(cx).focused_pane.clone();
+        let term = pane.read(cx).active_terminal().clone();
+        term.update(cx, |view, _cx| {
+            view.write_to_pty(text.as_bytes());
+        });
+    }
 }

@@ -1,14 +1,23 @@
 use gpui::*;
 
 use crate::app_state::AppState;
+use crate::dropdown_menu::{DropdownMenu, MenuDismissed, MenuItem};
 use crate::root_view::{ToggleCommandPalette, ToggleNotificationPanel, ToggleSidebar};
 use crate::text_input::{TextInputAction, TextInputState};
 use crate::theme;
+
+const AGENTS: &[(&str, &str)] = &[
+    ("Claude Code", "claude\n"),
+    ("Codex", "codex\n"),
+    ("Aider", "aider\n"),
+    ("Goose", "goose session\n"),
+];
 
 pub struct Sidebar {
     app_state: Entity<AppState>,
     rename_state: Option<(usize, TextInputState)>,
     rename_focus: Option<FocusHandle>,
+    agent_menu: Option<Entity<DropdownMenu>>,
 }
 
 impl Sidebar {
@@ -17,6 +26,7 @@ impl Sidebar {
             app_state,
             rename_state: None,
             rename_focus: None,
+            agent_menu: None,
         }
     }
 
@@ -44,6 +54,44 @@ impl Sidebar {
         }
         self.rename_state = None;
         self.rename_focus = None;
+        cx.notify();
+    }
+
+    fn toggle_agent_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.agent_menu.is_some() {
+            self.agent_menu = None;
+            cx.notify();
+            return;
+        }
+
+        let items: Vec<MenuItem> = AGENTS
+            .iter()
+            .map(|(name, _cmd)| MenuItem::new(name).icon(theme::icons::AGENT))
+            .collect();
+
+        let app_state = self.app_state.clone();
+        let menu = cx.new(|cx| {
+            DropdownMenu::new(
+                items,
+                move |idx, _window, cx| {
+                    if let Some((_name, cmd)) = AGENTS.get(idx) {
+                        app_state.update(cx, |state, cx| {
+                            state.write_to_focused_terminal(cmd, cx);
+                        });
+                    }
+                },
+                cx,
+            )
+        });
+
+        cx.subscribe(&menu, |sidebar: &mut Self, _menu, _event: &MenuDismissed, cx| {
+            sidebar.agent_menu = None;
+            cx.notify();
+        })
+        .detach();
+
+        menu.read(cx).focus_handle.focus(window);
+        self.agent_menu = Some(menu);
         cx.notify();
     }
 
@@ -223,7 +271,7 @@ impl Render for Sidebar {
             tabs = tabs.child(tab);
         }
 
-        div()
+        let mut sidebar = div()
             .w(px(200.0))
             .h_full()
             .flex_shrink_0()
@@ -278,10 +326,32 @@ impl Render for Sidebar {
                                         }),
                                     )
                                     .child(if notif_count > 0 {
-                                        format!("! {notif_count}")
+                                        format!("{} {notif_count}", theme::icons::BELL)
                                     } else {
-                                        "!".to_string()
+                                        theme::icons::BELL.to_string()
                                     }),
+                            )
+                            // Agent launcher
+                            .child(
+                                div()
+                                    .id("sidebar-agent-btn")
+                                    .px(px(5.0))
+                                    .py(px(2.0))
+                                    .rounded(px(3.0))
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(theme::ACCENT_GREEN))
+                                    .cursor_pointer()
+                                    .hover(|s| {
+                                        s.bg(rgb(theme::BG_HOVER))
+                                            .text_color(rgb(theme::TEXT_PRIMARY))
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|sidebar, _event, window, cx| {
+                                            sidebar.toggle_agent_menu(window, cx);
+                                        }),
+                                    )
+                                    .child(theme::icons::AGENT),
                             )
                             .child(
                                 div()
@@ -359,8 +429,15 @@ impl Render for Sidebar {
                                     });
                                 })
                             })
-                            .child("+ New Workspace"),
+                            .child(format!("{} New Workspace", theme::icons::PLUS)),
                     ),
-            )
+            );
+
+        // Agent menu overlay
+        if let Some(menu) = &self.agent_menu {
+            sidebar = sidebar.child(menu.clone());
+        }
+
+        sidebar
     }
 }
