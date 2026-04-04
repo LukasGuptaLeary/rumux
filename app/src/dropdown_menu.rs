@@ -167,31 +167,19 @@ impl Render for DropdownMenu {
             }
         }
 
-        // Backdrop (transparent, catches clicks to dismiss)
+        // Menu panel (positioned near top-right of parent)
         div()
             .absolute()
-            .inset_0()
+            .top(px(32.0))
+            .right(px(4.0))
+            .min_w(px(180.0))
+            .bg(rgb(theme::BG_SECONDARY))
+            .border_1()
+            .border_color(rgb(theme::DIVIDER))
+            .rounded(px(6.0))
+            .overflow_hidden()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
-            .on_mouse_down(MouseButton::Left, cx.listener(|_menu, _event, _window, cx| {
-                cx.emit(MenuDismissed);
-            }))
-            // Menu panel
-            .child(
-                div()
-                    .absolute()
-                    .top(px(40.0))
-                    .right(px(8.0))
-                    .min_w(px(180.0))
-                    .bg(rgb(theme::BG_SECONDARY))
-                    .border_1()
-                    .border_color(rgb(theme::DIVIDER))
-                    .rounded(px(6.0))
-                    .overflow_hidden()
-                    .on_mouse_down(MouseButton::Left, |_event, _window, _cx| {
-                        // Prevent backdrop dismiss when clicking menu body
-                    })
-                    .child(list),
-            )
+            .child(list)
     }
 }

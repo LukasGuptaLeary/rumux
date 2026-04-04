@@ -1,10 +1,17 @@
 use gpui::*;
 use gpui_terminal::TerminalView;
 
+use crate::dropdown_menu::{DropdownMenu, MenuDismissed, MenuItem};
 use crate::root_view::{SplitDown, SplitRight, TogglePaneZoom};
 use crate::terminal_surface::spawn_terminal_view;
 use crate::text_input::{TextInputAction, TextInputState};
 use crate::theme;
+
+const AGENTS: &[(&str, &str)] = &[
+    ("Claude Code", "claude\n"),
+    ("Codex", "codex\n"),
+    ("OpenCode", "opencode\n"),
+];
 
 pub struct Pane {
     terminals: Vec<Entity<TerminalView>>,
@@ -15,6 +22,7 @@ pub struct Pane {
     pub can_zoom: bool,
     rename_state: Option<(usize, TextInputState)>,
     rename_focus: Option<FocusHandle>,
+    agent_menu: Option<Entity<DropdownMenu>>,
 }
 
 impl Pane {
@@ -28,6 +36,7 @@ impl Pane {
             can_zoom: false,
             rename_state: None,
             rename_focus: None,
+            agent_menu: None,
         }
     }
 
@@ -142,6 +151,47 @@ impl Pane {
         }
         self.rename_state = None;
         self.rename_focus = None;
+        cx.notify();
+    }
+
+    fn toggle_agent_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.agent_menu.is_some() {
+            self.agent_menu = None;
+            cx.notify();
+            return;
+        }
+
+        let items: Vec<MenuItem> = AGENTS
+            .iter()
+            .map(|(name, _)| MenuItem::new(name).icon(theme::icons::AGENT))
+            .collect();
+
+        let terminals = self.terminals.clone();
+        let active_idx = self.active_idx;
+        let menu = cx.new(|cx| {
+            DropdownMenu::new(
+                items,
+                move |idx, _window, cx| {
+                    if let Some((_, cmd)) = AGENTS.get(idx) {
+                        if let Some(term) = terminals.get(active_idx) {
+                            term.update(cx, |view, _cx| {
+                                view.write_to_pty(cmd.as_bytes());
+                            });
+                        }
+                    }
+                },
+                cx,
+            )
+        });
+
+        cx.subscribe(&menu, |pane: &mut Self, _menu, _event: &MenuDismissed, cx| {
+            pane.agent_menu = None;
+            cx.notify();
+        })
+        .detach();
+
+        menu.read(cx).focus_handle.focus(window);
+        self.agent_menu = Some(menu);
         cx.notify();
     }
 
@@ -381,8 +431,27 @@ impl Render for Pane {
                     .text_color(rgb(theme::TEXT_DIM))
                     .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)));
             }
-            actions = actions.child(zoom_btn.child(if is_zoomed { "[x]" } else { "[ ]" }));
+            actions = actions.child(zoom_btn.child(
+                if is_zoomed { theme::icons::MINIMIZE } else { theme::icons::MAXIMIZE }
+            ));
         }
+
+        // Agent launcher button
+        actions = actions.child(
+            div()
+                .id("pane-agent")
+                .px(px(6.0))
+                .py(px(2.0))
+                .rounded(px(3.0))
+                .text_size(px(13.0))
+                .text_color(rgb(theme::ACCENT_GREEN))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)))
+                .on_mouse_down(MouseButton::Left, cx.listener(|pane, _event, window, cx| {
+                    pane.toggle_agent_menu(window, cx);
+                }))
+                .child(theme::icons::AGENT),
+        );
 
         header = header.child(actions);
 
@@ -406,6 +475,11 @@ impl Render for Pane {
         container = container.child(
             div().flex_1().overflow_hidden().child(self.active_terminal().clone()),
         );
+
+        // Agent menu overlay
+        if let Some(menu) = &self.agent_menu {
+            container = container.child(menu.clone());
+        }
 
         container
     }
