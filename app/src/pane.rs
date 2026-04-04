@@ -10,6 +10,7 @@ pub struct Pane {
     active_idx: usize,
     focus_handle: FocusHandle,
     pub is_zoomed: bool,
+    pub can_zoom: bool,
 }
 
 impl Pane {
@@ -19,6 +20,7 @@ impl Pane {
             active_idx: 0,
             focus_handle: cx.focus_handle(),
             is_zoomed: false,
+            can_zoom: false,
         }
     }
 
@@ -208,8 +210,8 @@ impl Render for Pane {
                     }))
                     .child("="),
             )
-            // Zoom toggle
-            .child({
+            // Zoom toggle (only shown when there are splits or already zoomed)
+            .children(if self.can_zoom || self.is_zoomed { Some({
                 let is_zoomed = self.is_zoomed;
                 let mut zoom_btn = div()
                     .id("pane-zoom")
@@ -232,7 +234,7 @@ impl Render for Pane {
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)));
                 }
                 zoom_btn.child(if is_zoomed { "[x]" } else { "[ ]" })
-            });
+            }) } else { None });
 
         header = header.child(actions);
 

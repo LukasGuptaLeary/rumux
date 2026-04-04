@@ -56,13 +56,20 @@ impl Workspace {
         }
     }
 
+    pub fn has_splits(&self) -> bool {
+        matches!(self.layout, LayoutNode::Split { .. })
+    }
+
     pub fn toggle_zoom(&mut self, cx: &mut App) {
+        // Only allow zoom when there are splits
+        if !self.zoomed && !self.has_splits() {
+            return;
+        }
+
         self.zoomed = !self.zoomed;
-        // Update the focused pane's is_zoomed flag
         self.focused_pane.update(cx, |pane, _cx| {
             pane.is_zoomed = self.zoomed;
         });
-        // If un-zooming, clear zoom flag on all panes
         if !self.zoomed {
             for pane in self.panes() {
                 pane.update(cx, |pane, _cx| {
@@ -200,8 +207,15 @@ pub fn remove_pane_from_layout(node: LayoutNode, target: &Entity<Pane>) -> Optio
 
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Update can_zoom on all panes based on whether splits exist
+        let has_splits = self.has_splits();
+        for pane in self.panes() {
+            pane.update(cx, |pane, _cx| {
+                pane.can_zoom = has_splits;
+            });
+        }
+
         let content = if self.zoomed {
-            // Show only the focused pane
             div().size_full().child(self.focused_pane.clone())
         } else {
             self.render_layout_node(&self.layout, cx)
