@@ -24,6 +24,7 @@ pub struct Pane {
     rename_focus: Option<FocusHandle>,
     agent_menu: Option<Entity<DropdownMenu>>,
     tab_context_menu: Option<(usize, Entity<DropdownMenu>)>,
+    pub needs_focus: bool,
 }
 
 impl Pane {
@@ -39,6 +40,7 @@ impl Pane {
             rename_focus: None,
             agent_menu: None,
             tab_context_menu: None,
+            needs_focus: true,
         }
     }
 
@@ -138,9 +140,15 @@ impl Pane {
     }
 
     fn start_rename(&mut self, idx: usize, cx: &mut Context<Self>) {
+        // Close any open menus first
+        self.agent_menu = None;
+        self.tab_context_menu = None;
+
         let current = self.tab_name(idx);
         self.rename_state = Some((idx, TextInputState::new(&current)));
         self.rename_focus = Some(cx.focus_handle());
+        // Focus will be set on next render via track_focus on the rename element.
+        // The terminal focus guard (has_rename check) prevents focus stealing.
         cx.notify();
     }
 
@@ -153,6 +161,14 @@ impl Pane {
         }
         self.rename_state = None;
         self.rename_focus = None;
+        self.needs_focus = true;
+        cx.notify();
+    }
+
+    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        self.rename_state = None;
+        self.rename_focus = None;
+        self.needs_focus = true;
         cx.notify();
     }
 
@@ -188,6 +204,7 @@ impl Pane {
         cx.subscribe(&menu, move |pane: &mut Self, _menu, _event: &MenuDismissed, cx| {
             let action = selected_action.lock().ok().and_then(|s| *s);
             pane.tab_context_menu = None;
+            pane.needs_focus = true; // Return focus to terminal after menu
 
             if let Some(selected) = action {
                 if has_multiple {
@@ -245,18 +262,13 @@ impl Pane {
 
         cx.subscribe(&menu, |pane: &mut Self, _menu, _event: &MenuDismissed, cx| {
             pane.agent_menu = None;
+            pane.needs_focus = true;
             cx.notify();
         })
         .detach();
 
         menu.read(cx).focus_handle.focus(window);
         self.agent_menu = Some(menu);
-        cx.notify();
-    }
-
-    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
-        self.rename_state = None;
-        self.rename_focus = None;
         cx.notify();
     }
 
@@ -278,10 +290,29 @@ impl Pane {
 
 impl Render for Pane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.active_terminal()
-            .read(cx)
-            .focus_handle()
-            .focus(window);
+        // Focus architecture:
+        //   1. Rename input gets focus when active (highest priority)
+        //   2. Dropdown menus manage their own focus via track_focus
+        //   3. Terminal gets focus ONLY when the pane contains focus AND
+        //      no overlay is active. This prevents stealing focus from
+        //      the sidebar rename, command palette, or other panels.
+        if self.rename_state.is_some() {
+            if let Some(ref focus) = self.rename_focus {
+                focus.focus(window);
+            }
+        } else if self.agent_menu.is_none() && self.tab_context_menu.is_none() {
+            // Focus terminal if: first render (needs_focus) OR pane already has focus.
+            // This prevents stealing focus from sidebar, command palette, etc.
+            let should_focus = self.needs_focus
+                || self.focus_handle.contains_focused(window, cx);
+            if should_focus {
+                self.needs_focus = false;
+                self.active_terminal()
+                    .read(cx)
+                    .focus_handle()
+                    .focus(window);
+            }
+        }
 
         let mut container = div().size_full().flex().flex_col().track_focus(&self.focus_handle);
 
@@ -316,12 +347,9 @@ impl Render for Pane {
                 // Left click: activate, double-click: rename
                 .on_mouse_down(MouseButton::Left, {
                     let name_for_rename = tab_name.clone();
-                    cx.listener(move |pane, event: &MouseDownEvent, window, cx| {
+                    cx.listener(move |pane, event: &MouseDownEvent, _window, cx| {
                         if event.click_count == 2 {
                             pane.start_rename(i, cx);
-                            if let Some(ref focus) = pane.rename_focus {
-                                focus.focus(window);
-                            }
                         } else {
                             pane.activate_terminal(i);
                         }

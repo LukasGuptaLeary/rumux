@@ -99,6 +99,10 @@ impl Workspace {
                     .size_full()
                     .on_mouse_down(MouseButton::Left, {
                         cx.listener(move |ws, _event, _window, cx| {
+                            // Set this pane as focused and tell it to grab terminal focus
+                            pane_clone.update(cx, |pane, _cx| {
+                                pane.needs_focus = true;
+                            });
                             ws.focused_pane = pane_clone.clone();
                             cx.notify();
                         })
