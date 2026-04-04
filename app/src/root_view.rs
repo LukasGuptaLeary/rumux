@@ -1,6 +1,7 @@
 use gpui::*;
 
 use crate::app_state::AppState;
+use crate::command_palette::CommandPalette;
 use crate::sidebar::Sidebar;
 use crate::theme;
 use crate::workspace::SplitDirection;
@@ -18,12 +19,14 @@ actions!(
         PrevWorkspace,
         NextTerminal,
         PrevTerminal,
+        ToggleCommandPalette,
     ]
 );
 
 pub struct RootView {
     app_state: Entity<AppState>,
     sidebar: Entity<Sidebar>,
+    command_palette: Option<Entity<CommandPalette>>,
     pub focus_handle: FocusHandle,
 }
 
@@ -33,6 +36,7 @@ impl RootView {
         Self {
             app_state,
             sidebar,
+            command_palette: None,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -42,7 +46,7 @@ impl Render for RootView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_ws = self.app_state.read(cx).active_workspace().clone();
 
-        div()
+        let mut container = div()
             .size_full()
             .flex()
             .flex_row()
@@ -100,7 +104,25 @@ impl Render for RootView {
                 let focused = ws.read(cx).focused_pane.clone();
                 focused.update(cx, |pane, _cx| pane.prev_terminal());
             }))
+            .on_action(cx.listener(|root, _: &ToggleCommandPalette, window, cx| {
+                if root.command_palette.is_some() {
+                    root.command_palette = None;
+                    root.focus_handle.focus(window);
+                } else {
+                    let palette = cx.new(|cx| CommandPalette::new(cx));
+                    palette.read(cx).focus_handle.focus(window);
+                    root.command_palette = Some(palette);
+                }
+                cx.notify();
+            }))
             .child(self.sidebar.clone())
-            .child(div().flex_1().overflow_hidden().child(active_ws))
+            .child(div().flex_1().overflow_hidden().child(active_ws));
+
+        // Command palette overlay
+        if let Some(palette) = &self.command_palette {
+            container = container.child(palette.clone());
+        }
+
+        container
     }
 }

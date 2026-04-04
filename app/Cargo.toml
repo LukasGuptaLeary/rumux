@@ -28,3 +28,6 @@ parking_lot = "0.12"
 smol = "2"
 async-net = "2"
 futures-lite = "2"
+
+[dev-dependencies]
+tempfile = "3"

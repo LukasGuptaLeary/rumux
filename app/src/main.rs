@@ -1,9 +1,13 @@
 #![warn(clippy::all)]
 
 mod app_state;
+mod command_palette;
+mod notifications;
 mod pane;
 mod root_view;
+mod session;
 mod sidebar;
+mod socket_server;
 mod terminal_surface;
 mod theme;
 mod workspace;
@@ -28,7 +32,17 @@ fn main() {
             KeyBinding::new("ctrl-shift-tab", PrevWorkspace, None),
             KeyBinding::new("ctrl-pagedown", NextTerminal, None),
             KeyBinding::new("ctrl-pageup", PrevTerminal, None),
+            KeyBinding::new("ctrl-shift-p", ToggleCommandPalette, None),
         ]);
+
+        // Start socket server in background
+        cx.spawn(async |_cx: &mut AsyncApp| {
+            if let Err(e) = socket_server::start_socket_server().await {
+                eprintln!("Socket server error: {e}");
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach();
 
         cx.spawn(async move |cx: &mut AsyncApp| {
             let app_state = cx.new(|cx| AppState::new(&mut *cx))?;
