@@ -147,8 +147,6 @@ impl Pane {
         let current = self.tab_name(idx);
         self.rename_state = Some((idx, TextInputState::new(&current)));
         self.rename_focus = Some(cx.focus_handle());
-        // Focus will be set on next render via track_focus on the rename element.
-        // The terminal focus guard (has_rename check) prevents focus stealing.
         cx.notify();
     }
 
@@ -290,12 +288,22 @@ impl Pane {
 
 impl Render for Pane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Cancel rename if its focus handle lost focus (user clicked elsewhere)
+        if self.rename_state.is_some() {
+            if let Some(ref focus) = self.rename_focus {
+                if !focus.is_focused(window) && !self.needs_focus {
+                    // Focus moved away — cancel the rename
+                    self.rename_state = None;
+                    self.rename_focus = None;
+                }
+            }
+        }
+
         // Focus architecture:
         //   1. Rename input gets focus when active (highest priority)
         //   2. Dropdown menus manage their own focus via track_focus
         //   3. Terminal gets focus ONLY when the pane contains focus AND
-        //      no overlay is active. This prevents stealing focus from
-        //      the sidebar rename, command palette, or other panels.
+        //      no overlay is active.
         if self.rename_state.is_some() {
             if let Some(ref focus) = self.rename_focus {
                 focus.focus(window);

@@ -139,7 +139,17 @@ impl Sidebar {
 }
 
 impl Render for Sidebar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Cancel rename if focus moved away
+        if self.rename_state.is_some() {
+            if let Some(ref focus) = self.rename_focus {
+                if !focus.is_focused(window) {
+                    self.rename_state = None;
+                    self.rename_focus = None;
+                }
+            }
+        }
+
         let state = self.app_state.read(cx);
         let active_idx = state.active_workspace_idx;
         let ws_count = state.workspaces.len();
