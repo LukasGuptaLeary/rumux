@@ -23,6 +23,7 @@ pub struct Pane {
     rename_state: Option<(usize, TextInputState)>,
     rename_focus: Option<FocusHandle>,
     agent_menu: Option<Entity<DropdownMenu>>,
+    tab_context_menu: Option<(usize, Entity<DropdownMenu>)>,
 }
 
 impl Pane {
@@ -37,6 +38,7 @@ impl Pane {
             rename_state: None,
             rename_focus: None,
             agent_menu: None,
+            tab_context_menu: None,
         }
     }
 
@@ -154,6 +156,63 @@ impl Pane {
         cx.notify();
     }
 
+    fn show_tab_context_menu(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let has_multiple = self.terminals.len() > 1;
+
+        let mut items = vec![
+            MenuItem::new("Rename").icon(theme::icons::RENAME),
+        ];
+        if has_multiple {
+            items.push(MenuItem::new("Close Others").icon(theme::icons::CLOSE_OTHERS));
+            items.push(MenuItem::new("Close to Right"));
+            items.push(MenuItem::new("Close to Left").separator());
+            items.push(MenuItem::new("Close").icon(theme::icons::CLOSE));
+        }
+
+        // We store which action was selected so the dismiss handler can execute it
+        let selected_action = std::sync::Arc::new(std::sync::Mutex::new(None::<usize>));
+        let selected_clone = selected_action.clone();
+
+        let menu = cx.new(|cx| {
+            DropdownMenu::new(
+                items,
+                move |selected, _window, _cx| {
+                    if let Ok(mut s) = selected_clone.lock() {
+                        *s = Some(selected);
+                    }
+                },
+                cx,
+            )
+        });
+
+        cx.subscribe(&menu, move |pane: &mut Self, _menu, _event: &MenuDismissed, cx| {
+            let action = selected_action.lock().ok().and_then(|s| *s);
+            pane.tab_context_menu = None;
+
+            if let Some(selected) = action {
+                if has_multiple {
+                    match selected {
+                        0 => pane.start_rename(idx, cx),
+                        1 => { pane.close_others(idx); cx.notify(); }
+                        2 => { pane.close_to_right(idx); cx.notify(); }
+                        3 => { pane.close_to_left(idx); cx.notify(); }
+                        4 => { pane.close_terminal(idx); cx.notify(); }
+                        _ => {}
+                    }
+                } else if selected == 0 {
+                    pane.start_rename(idx, cx);
+                }
+            }
+
+            cx.notify();
+        })
+        .detach();
+
+        menu.read(cx).focus_handle.focus(window);
+        self.tab_context_menu = Some((idx, menu));
+        cx.notify();
+    }
+
     fn toggle_agent_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.agent_menu.is_some() {
             self.agent_menu = None;
@@ -242,6 +301,7 @@ impl Render for Pane {
             let is_active = i == self.active_idx;
             let is_renaming = self.rename_state.as_ref().is_some_and(|(idx, _)| *idx == i);
 
+            let tab_name = self.tab_name(i);
             let mut tab = div()
                 .id(ElementId::Name(format!("term-tab-{i}").into()))
                 .flex()
@@ -253,10 +313,25 @@ impl Render for Pane {
                 .text_size(px(12.0))
                 .border_r_1()
                 .border_color(rgb(theme::BORDER))
+                // Left click: activate, double-click: rename
                 .on_mouse_down(MouseButton::Left, {
-                    cx.listener(move |pane, _event, _window, cx| {
-                        pane.activate_terminal(i);
+                    let name_for_rename = tab_name.clone();
+                    cx.listener(move |pane, event: &MouseDownEvent, window, cx| {
+                        if event.click_count == 2 {
+                            pane.start_rename(i, cx);
+                            if let Some(ref focus) = pane.rename_focus {
+                                focus.focus(window);
+                            }
+                        } else {
+                            pane.activate_terminal(i);
+                        }
                         cx.notify();
+                    })
+                })
+                // Right-click: context menu
+                .on_mouse_down(MouseButton::Right, {
+                    cx.listener(move |pane, _event, window, cx| {
+                        pane.show_tab_context_menu(i, window, cx);
                     })
                 });
 
@@ -290,26 +365,7 @@ impl Render for Pane {
 
                 tab = tab.child(rename_el.child(format!("{text}|")));
             } else {
-                tab = tab.child(self.tab_name(i));
-
-                // Rename button
-                tab = tab.child(
-                    div()
-                        .id(ElementId::Name(format!("term-rename-{i}").into()))
-                        .text_size(px(9.0))
-                        .text_color(rgb(theme::TEXT_DIM))
-                        .cursor_pointer()
-                        .hover(|s| s.text_color(rgb(theme::ACCENT)))
-                        .on_mouse_down(MouseButton::Left, {
-                            cx.listener(move |pane, _event, window, cx| {
-                                pane.start_rename(i, cx);
-                                if let Some(ref focus) = pane.rename_focus {
-                                    focus.focus(window);
-                                }
-                            })
-                        })
-                        .child("R"),
-                );
+                tab = tab.child(tab_name.clone());
 
                 // Close button
                 if self.terminals.len() > 1 {
@@ -326,28 +382,8 @@ impl Render for Pane {
                                     cx.notify();
                                 })
                             })
-                            .child("x"),
+                            .child(theme::icons::CLOSE),
                     );
-
-                    // Context actions on active tab with 3+ terminals
-                    if is_active && self.terminals.len() >= 3 {
-                        // Close Others
-                        tab = tab.child(
-                            div()
-                                .id(ElementId::Name(format!("term-close-others-{i}").into()))
-                                .text_size(px(9.0))
-                                .text_color(rgb(theme::TEXT_DIM))
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(rgb(theme::ACCENT_RED)))
-                                .on_mouse_down(MouseButton::Left, {
-                                    cx.listener(move |pane, _event, _window, cx| {
-                                        pane.close_others(i);
-                                        cx.notify();
-                                    })
-                                })
-                                .child("xO"),
-                        );
-                    }
                 }
             }
 
@@ -476,8 +512,11 @@ impl Render for Pane {
             div().flex_1().overflow_hidden().child(self.active_terminal().clone()),
         );
 
-        // Agent menu overlay
+        // Menu overlays
         if let Some(menu) = &self.agent_menu {
+            container = container.child(menu.clone());
+        }
+        if let Some((_idx, menu)) = &self.tab_context_menu {
             container = container.child(menu.clone());
         }
 

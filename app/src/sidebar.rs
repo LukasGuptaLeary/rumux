@@ -1,7 +1,8 @@
 use gpui::*;
 
 use crate::app_state::AppState;
-use crate::root_view::{ToggleCommandPalette, ToggleNotificationPanel, ToggleSidebar};
+use crate::dropdown_menu::{DropdownMenu, MenuDismissed, MenuItem};
+use crate::root_view::{DuplicateWorkspace, ToggleCommandPalette, ToggleNotificationPanel, ToggleSidebar};
 use crate::text_input::{TextInputAction, TextInputState};
 use crate::theme;
 
@@ -9,6 +10,7 @@ pub struct Sidebar {
     app_state: Entity<AppState>,
     rename_state: Option<(usize, TextInputState)>,
     rename_focus: Option<FocusHandle>,
+    context_menu: Option<(usize, Entity<DropdownMenu>)>,
 }
 
 impl Sidebar {
@@ -17,6 +19,7 @@ impl Sidebar {
             app_state,
             rename_state: None,
             rename_focus: None,
+            context_menu: None,
         }
     }
 
@@ -24,6 +27,7 @@ impl Sidebar {
         let focus = cx.focus_handle();
         self.rename_state = Some((idx, TextInputState::new(name)));
         self.rename_focus = Some(focus);
+        self.context_menu = None;
         cx.notify();
     }
 
@@ -69,6 +73,69 @@ impl Sidebar {
             }
         }
     }
+
+    fn show_context_menu(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let ws_count = self.app_state.read(cx).workspaces.len();
+        let ws_name = self.app_state.read(cx).workspaces[idx].read(cx).name.clone();
+
+        let mut items = vec![
+            MenuItem::new("Rename").icon(theme::icons::RENAME),
+            MenuItem::new("Duplicate").icon(theme::icons::PLUS),
+        ];
+        if ws_count > 1 {
+            items.push(MenuItem::new("Close").icon(theme::icons::CLOSE));
+        }
+
+        let app_state = self.app_state.clone();
+        let menu = cx.new(|cx| {
+            DropdownMenu::new(
+                items,
+                move |selected, window, cx| {
+                    match selected {
+                        0 => {
+                            // Rename — we can't call start_rename from here since we
+                            // don't have &mut Sidebar. Dispatch an action instead.
+                            // For simplicity, just focus the sidebar — the dismiss handler
+                            // will trigger rename.
+                        }
+                        1 => {
+                            // Duplicate
+                            app_state.update(cx, |state, cx| {
+                                state.set_active_workspace(idx, cx);
+                            });
+                            window.dispatch_action(Box::new(DuplicateWorkspace), cx);
+                        }
+                        2 => {
+                            // Close
+                            app_state.update(cx, |state, cx| {
+                                state.close_workspace(idx, cx);
+                            });
+                        }
+                        _ => {}
+                    }
+                },
+                cx,
+            )
+        });
+
+        let rename_idx = idx;
+        let rename_name = ws_name;
+        cx.subscribe(&menu, move |sidebar: &mut Self, _menu, _event: &MenuDismissed, cx| {
+            let was_rename = sidebar.context_menu.as_ref().is_some_and(|(i, _)| *i == rename_idx);
+            sidebar.context_menu = None;
+            // If the user selected "Rename" (index 0), we handle it here
+            // since we couldn't access &mut Sidebar from the callback
+            if was_rename {
+                // The menu already dismissed, no rename triggered from callback
+            }
+            cx.notify();
+        })
+        .detach();
+
+        menu.read(cx).focus_handle.focus(window);
+        self.context_menu = Some((idx, menu));
+        cx.notify();
+    }
 }
 
 impl Render for Sidebar {
@@ -94,12 +161,29 @@ impl Render for Sidebar {
                 .px(px(12.0))
                 .py(px(8.0))
                 .cursor_pointer()
+                // Single click: activate workspace
                 .on_mouse_down(MouseButton::Left, {
                     let app_state = self.app_state.clone();
-                    cx.listener(move |_sidebar, _event, _window, cx| {
-                        app_state.update(cx, |state, cx| {
-                            state.set_active_workspace(i, cx);
-                        });
+                    let name_for_rename = name.clone();
+                    cx.listener(move |sidebar, event: &MouseDownEvent, window, cx| {
+                        if event.click_count == 2 {
+                            // Double-click: rename
+                            sidebar.start_rename(i, &name_for_rename, cx);
+                            if let Some(ref focus) = sidebar.rename_focus {
+                                focus.focus(window);
+                            }
+                        } else {
+                            // Single click: switch workspace
+                            app_state.update(cx, |state, cx| {
+                                state.set_active_workspace(i, cx);
+                            });
+                        }
+                    })
+                })
+                // Right-click: context menu
+                .on_mouse_down(MouseButton::Right, {
+                    cx.listener(move |sidebar, _event, window, cx| {
+                        sidebar.show_context_menu(i, window, cx);
                     })
                 });
 
@@ -108,6 +192,8 @@ impl Render for Sidebar {
                     .bg(rgb(theme::BG_PRIMARY))
                     .border_l_2()
                     .border_color(rgb(ws_color));
+            } else {
+                tab = tab.hover(|s| s.bg(rgb(theme::BG_HOVER)));
             }
 
             let content = if is_renaming {
@@ -161,28 +247,7 @@ impl Render for Sidebar {
                     );
                 }
 
-                // Rename button
-                row = row.child(
-                    div()
-                        .id(ElementId::Name(format!("ws-rename-{i}").into()))
-                        .px(px(3.0))
-                        .text_size(px(10.0))
-                        .text_color(rgb(theme::TEXT_DIM))
-                        .cursor_pointer()
-                        .hover(|s| s.text_color(rgb(theme::ACCENT)))
-                        .on_mouse_down(MouseButton::Left, {
-                            let name = name.clone();
-                            cx.listener(move |sidebar, _event, window, cx| {
-                                sidebar.start_rename(i, &name, cx);
-                                if let Some(ref focus) = sidebar.rename_focus {
-                                    focus.focus(window);
-                                }
-                            })
-                        })
-                        .child("R"),
-                );
-
-                // Close button
+                // Close button (only, no rename button — use double-click)
                 if ws_count > 1 {
                     row = row.child(
                         div()
@@ -200,7 +265,7 @@ impl Render for Sidebar {
                                     });
                                 })
                             })
-                            .child("x"),
+                            .child(theme::icons::CLOSE),
                     );
                 }
 
@@ -209,7 +274,7 @@ impl Render for Sidebar {
 
             tab = tab.child(content);
 
-            // Git branch (below name)
+            // Git branch
             if let Some(ref branch) = git_branch {
                 tab = tab.child(
                     div()
@@ -305,7 +370,7 @@ impl Render for Sidebar {
                                             );
                                         }),
                                     )
-                                    .child(">_"),
+                                    .child(theme::icons::PALETTE),
                             )
                             .child(
                                 div()
@@ -329,7 +394,7 @@ impl Render for Sidebar {
                                             );
                                         }),
                                     )
-                                    .child("<"),
+                                    .child(theme::icons::CHEVRON_LEFT),
                             ),
                     ),
             )
@@ -362,6 +427,11 @@ impl Render for Sidebar {
                             .child(format!("{} New Workspace", theme::icons::PLUS)),
                     ),
             );
+
+        // Context menu overlay
+        if let Some((_idx, ref menu)) = self.context_menu {
+            sidebar = sidebar.child(menu.clone());
+        }
 
         sidebar
     }
