@@ -4,6 +4,7 @@ mod app_state;
 mod command_palette;
 mod config;
 mod custom_commands;
+mod dropdown_menu;
 mod find_bar;
 mod notification_panel;
 mod notifications;

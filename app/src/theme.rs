@@ -1,4 +1,4 @@
-use gpui::Hsla;
+use gpui::*;
 use gpui_terminal::ColorPalette;
 
 pub fn catppuccin_mocha() -> ColorPalette {
@@ -50,6 +50,53 @@ pub const WORKSPACE_COLORS: [u32; 8] = [
     0xfab387, // Peach
     0xcba6f7, // Mauve
 ];
+
+// Unicode icons for UI buttons
+pub mod icons {
+    pub const PLUS: &str = "+";
+    pub const CLOSE: &str = "\u{2715}";          // ✕
+    pub const RENAME: &str = "\u{270E}";          // ✎
+    pub const SPLIT_H: &str = "\u{25EB}";         // ◫
+    pub const SPLIT_V: &str = "\u{229F}";         // ⊟
+    pub const MAXIMIZE: &str = "\u{2922}";         // ⤢
+    pub const MINIMIZE: &str = "\u{2921}";         // ⤡
+    pub const BELL: &str = "\u{2691}";             // ⚑
+    pub const PALETTE: &str = "\u{2318}";          // ⌘
+    pub const CHEVRON_LEFT: &str = "\u{25C2}";     // ◂
+    pub const CHEVRON_RIGHT: &str = "\u{25B8}";    // ▸
+    pub const CLOSE_OTHERS: &str = "\u{2298}";     // ⊘
+    pub const AGENT: &str = "\u{2726}";            // ✦
+    pub const OVERFLOW: &str = "\u{22EF}";         // ⋯
+    pub const SEARCH: &str = "\u{2315}";           // ⌕
+}
+
+/// Reusable icon button builder with consistent styling.
+pub fn icon_button(id: impl Into<ElementId>, icon: &str) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .px(px(6.0))
+        .py(px(2.0))
+        .rounded(px(3.0))
+        .text_size(px(14.0))
+        .text_color(rgb(TEXT_DIM))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(BG_HOVER)).text_color(rgb(TEXT_PRIMARY)))
+        .child(icon.to_string())
+}
+
+/// Icon button with active/highlighted state.
+pub fn icon_button_active(id: impl Into<ElementId>, icon: &str) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .px(px(6.0))
+        .py(px(2.0))
+        .rounded(px(3.0))
+        .text_size(px(14.0))
+        .bg(rgb(ACCENT))
+        .text_color(rgb(BG_PRIMARY))
+        .cursor_pointer()
+        .child(icon.to_string())
+}
 
 pub fn hsla_from_rgb(hex: u32) -> Hsla {
     let r = ((hex >> 16) & 0xff) as f32 / 255.0;

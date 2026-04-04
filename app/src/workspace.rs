@@ -104,7 +104,9 @@ impl Workspace {
                         })
                     });
                 if is_focused {
-                    d = d.border_1().border_color(rgb(theme::ACCENT));
+                    d = d.border_t_2().border_color(rgb(theme::ACCENT));
+                } else {
+                    d = d.border_t_2().border_color(gpui::transparent_black());
                 }
                 d.child(pane.clone())
             }

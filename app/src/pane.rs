@@ -391,14 +391,14 @@ impl Render for Pane {
                 div()
                     .flex_shrink_0()
                     .px(px(8.0))
-                    .h_full()
-                    .flex()
-                    .items_center()
+                    .py(px(2.0))
+                    .mx(px(4.0))
                     .bg(rgb(theme::ACCENT))
                     .text_color(rgb(theme::BG_PRIMARY))
                     .text_size(px(10.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("ZOOMED"),
+                    .rounded(px(10.0))
+                    .child(format!("{} Zoomed", theme::icons::MAXIMIZE)),
             );
         }
 
