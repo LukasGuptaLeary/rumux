@@ -3,6 +3,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::IconName;
 use gpui_component::Sizable;
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::tab::{Tab, TabBar};
 use gpui_terminal::TerminalView;
 
 use crate::root_view::{SplitDown, SplitRight, TogglePaneZoom};
@@ -215,48 +216,25 @@ impl Render for Pane {
             .border_b_1()
             .border_color(rgb(theme::BORDER));
 
-        // Terminal tabs
-        let mut tabs_area = div().flex().flex_row().flex_1().overflow_hidden();
+        // Terminal tabs using gpui-component TabBar
+        let mut tab_bar = TabBar::new("pane-tabs")
+            .xsmall()
+            .selected_index(self.active_idx)
+            .on_click(cx.listener(|pane, idx: &usize, _window, cx| {
+                pane.activate_terminal(*idx);
+                cx.notify();
+            }));
+
         for i in 0..self.terminals.len() {
-            let is_active = i == self.active_idx;
             let is_renaming = self.rename_idx == Some(i);
             let tab_name = self.tab_name(i);
 
-            let mut tab = div()
-                .id(ElementId::Name(format!("term-tab-{i}").into()))
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .px(px(8.0))
-                .h_full()
-                .cursor_pointer()
-                .text_size(px(12.0))
-                .border_r_1()
-                .border_color(rgb(theme::BORDER))
-                .on_mouse_down(MouseButton::Left, {
-                    cx.listener(move |pane, event: &MouseDownEvent, window, cx| {
-                        if event.click_count == 2 {
-                            pane.start_rename(i, window, cx);
-                        } else {
-                            pane.activate_terminal(i);
-                        }
-                        cx.notify();
-                    })
-                });
-
-            if is_active {
-                tab = tab
-                    .bg(rgb(theme::BG_PRIMARY))
-                    .text_color(rgb(theme::TEXT_PRIMARY));
-            } else {
-                tab = tab
-                    .text_color(rgb(theme::TEXT_DIM))
-                    .hover(|s| s.bg(rgb(theme::BG_HOVER)));
-            }
+            let mut tab = Tab::new()
+                .icon(IconName::SquareTerminal);
 
             if is_renaming {
                 if let Some(ref editor) = self.rename_editor {
-                    tab = tab.child(
+                    tab = tab.label("").suffix(
                         Input::new(editor)
                             .appearance(false)
                             .bordered(false)
@@ -264,10 +242,10 @@ impl Render for Pane {
                     );
                 }
             } else {
-                tab = tab.child(tab_name);
+                tab = tab.label(SharedString::from(tab_name));
 
                 if self.terminals.len() > 1 {
-                    tab = tab.child(
+                    tab = tab.suffix(
                         Button::new(SharedString::from(format!("close-tab-{i}")))
                             .ghost()
                             .compact()
@@ -280,17 +258,15 @@ impl Render for Pane {
                 }
             }
 
-            tabs_area = tabs_area.child(tab);
+            tab_bar = tab_bar.child(tab);
         }
-        header = header.child(tabs_area);
 
-        // Action buttons
-        let mut actions = div()
+        // Put action buttons in the TabBar suffix
+        let action_buttons = div()
             .flex()
             .items_center()
             .gap(px(2.0))
             .px(px(4.0))
-            .flex_shrink_0()
             .child(
                 Button::new("pane-new-term")
                     .ghost()
@@ -320,7 +296,9 @@ impl Render for Pane {
                     })),
             );
 
-        // Zoom toggle
+        // Add zoom, agent buttons to the action buttons div
+        let mut action_buttons = action_buttons;
+
         if self.can_zoom || self.is_zoomed {
             let icon = if self.is_zoomed {
                 IconName::Minimize
@@ -333,13 +311,14 @@ impl Render for Pane {
             } else {
                 btn = btn.ghost();
             }
-            actions = actions.child(btn.on_click(cx.listener(|_pane, _event, window, cx| {
-                window.dispatch_action(Box::new(TogglePaneZoom), cx);
-            })));
+            action_buttons = action_buttons.child(btn.on_click(cx.listener(
+                |_pane, _event, window, cx| {
+                    window.dispatch_action(Box::new(TogglePaneZoom), cx);
+                },
+            )));
         }
 
-        // Agent launcher
-        actions = actions.child(
+        action_buttons = action_buttons.child(
             Button::new("pane-agent")
                 .ghost()
                 .compact()
@@ -353,15 +332,11 @@ impl Render for Pane {
                 })),
         );
 
-        header = header.child(actions);
-
         if self.is_zoomed {
-            header = header.child(
+            action_buttons = action_buttons.child(
                 div()
-                    .flex_shrink_0()
-                    .px(px(8.0))
+                    .px(px(6.0))
                     .py(px(2.0))
-                    .mx(px(4.0))
                     .bg(rgb(theme::ACCENT))
                     .text_color(rgb(theme::BG_PRIMARY))
                     .text_size(px(10.0))
@@ -370,6 +345,9 @@ impl Render for Pane {
                     .child("Zoomed"),
             );
         }
+
+        tab_bar = tab_bar.suffix(action_buttons);
+        header = header.child(tab_bar);
 
         container = container.child(header);
         container = container.child(
