@@ -1,10 +1,10 @@
 use gpui::*;
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_terminal::TerminalView;
 
 use crate::dropdown_menu::{DropdownMenu, MenuDismissed, MenuItem};
 use crate::root_view::{SplitDown, SplitRight, TogglePaneZoom};
 use crate::terminal_surface::spawn_terminal_view;
-use crate::text_input::{TextInputAction, TextInputState};
 use crate::theme;
 
 const AGENTS: &[(&str, &str)] = &[
@@ -20,10 +20,11 @@ pub struct Pane {
     focus_handle: FocusHandle,
     pub is_zoomed: bool,
     pub can_zoom: bool,
-    rename_state: Option<(usize, TextInputState)>,
-    rename_focus: Option<FocusHandle>,
-    rename_needs_focus: bool,
-    _rename_focus_sub: Option<gpui::Subscription>,
+    // Rename: uses gpui-component Input for proper focus/blur handling
+    rename_idx: Option<usize>,
+    rename_editor: Option<Entity<InputState>>,
+    _rename_sub: Option<gpui::Subscription>,
+    // Menus
     agent_menu: Option<Entity<DropdownMenu>>,
     tab_context_menu: Option<(usize, Entity<DropdownMenu>)>,
     pub needs_focus: bool,
@@ -38,10 +39,9 @@ impl Pane {
             focus_handle: cx.focus_handle(),
             is_zoomed: false,
             can_zoom: false,
-            rename_state: None,
-            rename_focus: None,
-            rename_needs_focus: false,
-            _rename_focus_sub: None,
+            rename_idx: None,
+            rename_editor: None,
+            _rename_sub: None,
             agent_menu: None,
             tab_context_menu: None,
             needs_focus: true,
@@ -143,51 +143,61 @@ impl Pane {
             .unwrap_or_else(|| format!("Terminal {}", idx + 1))
     }
 
-    fn start_rename(&mut self, idx: usize, cx: &mut Context<Self>) {
-        // Close any existing rename or menus first
+    fn start_rename(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // Cancel any existing rename/menus
+        self.clear_rename();
         self.agent_menu = None;
         self.tab_context_menu = None;
-        self.rename_state = None;
-        self.rename_focus = None;
-        self._rename_focus_sub = None;
 
         let current = self.tab_name(idx);
-        let focus = cx.focus_handle();
-        self.rename_state = Some((idx, TextInputState::new(&current)));
-        self.rename_focus = Some(focus);
-        self.rename_needs_focus = true;
-        cx.notify();
-    }
+        let editor = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_value(current, window, cx);
+            state
+        });
 
-    fn finish_rename(&mut self, cx: &mut Context<Self>) {
-        if let Some((idx, ref input)) = self.rename_state {
-            let new = input.text.trim().to_string();
-            if idx < self.names.len() {
-                self.names[idx] = if new.is_empty() { None } else { Some(new) };
+        // Subscribe to editor events for blur (cancel) and enter (confirm)
+        let sub = cx.subscribe(&editor, move |pane: &mut Self, editor, event: &InputEvent, cx| {
+            match event {
+                InputEvent::PressEnter { .. } => {
+                    let text = editor.read(cx).text().to_string();
+                    let text = text.trim().to_string();
+                    if let Some(rename_idx) = pane.rename_idx {
+                        if rename_idx < pane.names.len() {
+                            pane.names[rename_idx] =
+                                if text.is_empty() { None } else { Some(text) };
+                        }
+                    }
+                    pane.clear_rename();
+                    pane.needs_focus = true;
+                    cx.notify();
+                }
+                InputEvent::Blur => {
+                    // Cancel rename on blur (click away)
+                    pane.clear_rename();
+                    pane.needs_focus = true;
+                    cx.notify();
+                }
+                _ => {}
             }
-        }
-        self.clear_rename(cx);
-    }
+        });
 
-    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
-        self.clear_rename(cx);
-    }
-
-    fn clear_rename(&mut self, cx: &mut Context<Self>) {
-        self.rename_state = None;
-        self.rename_focus = None;
-        self.rename_needs_focus = false;
-        self._rename_focus_sub = None;
-        self.needs_focus = true;
+        self.rename_idx = Some(idx);
+        self.rename_editor = Some(editor);
+        self._rename_sub = Some(sub);
         cx.notify();
+    }
+
+    fn clear_rename(&mut self) {
+        self.rename_idx = None;
+        self.rename_editor = None;
+        self._rename_sub = None;
     }
 
     fn show_tab_context_menu(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
         let has_multiple = self.terminals.len() > 1;
 
-        let mut items = vec![
-            MenuItem::new("Rename").icon(theme::icons::RENAME),
-        ];
+        let mut items = vec![MenuItem::new("Rename").icon(theme::icons::RENAME)];
         if has_multiple {
             items.push(MenuItem::new("Close Others").icon(theme::icons::CLOSE_OTHERS));
             items.push(MenuItem::new("Close to Right"));
@@ -195,7 +205,6 @@ impl Pane {
             items.push(MenuItem::new("Close").icon(theme::icons::CLOSE));
         }
 
-        // We store which action was selected so the dismiss handler can execute it
         let selected_action = std::sync::Arc::new(std::sync::Mutex::new(None::<usize>));
         let selected_clone = selected_action.clone();
 
@@ -214,21 +223,33 @@ impl Pane {
         cx.subscribe(&menu, move |pane: &mut Self, _menu, _event: &MenuDismissed, cx| {
             let action = selected_action.lock().ok().and_then(|s| *s);
             pane.tab_context_menu = None;
-            pane.needs_focus = true; // Return focus to terminal after menu
+            pane.needs_focus = true;
 
             if let Some(selected) = action {
                 if has_multiple {
                     match selected {
-                        0 => pane.start_rename(idx, cx),
-                        1 => { pane.close_others(idx); cx.notify(); }
-                        2 => { pane.close_to_right(idx); cx.notify(); }
-                        3 => { pane.close_to_left(idx); cx.notify(); }
-                        4 => { pane.close_terminal(idx); cx.notify(); }
+                        0 => {} // Rename — needs window, handled below
+                        1 => {
+                            pane.close_others(idx);
+                            cx.notify();
+                        }
+                        2 => {
+                            pane.close_to_right(idx);
+                            cx.notify();
+                        }
+                        3 => {
+                            pane.close_to_left(idx);
+                            cx.notify();
+                        }
+                        4 => {
+                            pane.close_terminal(idx);
+                            cx.notify();
+                        }
                         _ => {}
                     }
-                } else if selected == 0 {
-                    pane.start_rename(idx, cx);
                 }
+                // Rename from context menu can't be done here (no window).
+                // User can double-click to rename instead.
             }
 
             cx.notify();
@@ -243,6 +264,7 @@ impl Pane {
     fn toggle_agent_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.agent_menu.is_some() {
             self.agent_menu = None;
+            self.needs_focus = true;
             cx.notify();
             return;
         }
@@ -281,59 +303,19 @@ impl Pane {
         self.agent_menu = Some(menu);
         cx.notify();
     }
-
-    fn on_rename_key(
-        &mut self,
-        event: &KeyDownEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some((_idx, ref mut input)) = self.rename_state {
-            match input.handle_key(&event.keystroke.key, event.keystroke.modifiers.control) {
-                TextInputAction::Confirm => self.finish_rename(cx),
-                TextInputAction::Cancel => self.cancel_rename(cx),
-                _ => cx.notify(),
-            }
-        }
-    }
 }
 
 impl Render for Pane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Set up on_focus_out subscription for rename (needs window, only available in render)
-        if self.rename_state.is_some() && self._rename_focus_sub.is_none() {
-            if let Some(ref focus) = self.rename_focus {
-                let sub = cx.on_focus_out(focus, window, |pane: &mut Self, _event, window, cx| {
-                    pane.clear_rename(cx);
-                    // Immediately focus the terminal so the click that
-                    // dismissed the rename also lands in the terminal
-                    pane.active_terminal()
-                        .read(cx)
-                        .focus_handle()
-                        .focus(window);
-                });
-                self._rename_focus_sub = Some(sub);
-            }
-        }
-
         // Focus architecture:
-        //   1. Rename input gets focus when active (highest priority)
-        //   2. Dropdown menus manage their own focus via track_focus
-        //   3. Terminal gets focus ONLY when the pane contains focus AND
-        //      no overlay is active.
-        if self.rename_state.is_some() && self.rename_needs_focus {
-            if let Some(ref focus) = self.rename_focus {
-                focus.focus(window);
-                self.rename_needs_focus = false;
-            }
-        } else if self.rename_state.is_none()
-            && self.agent_menu.is_none()
-            && self.tab_context_menu.is_none()
-        {
-            // Focus terminal if: first render (needs_focus) OR pane already has focus.
-            // This prevents stealing focus from sidebar, command palette, etc.
-            let should_focus = self.needs_focus
-                || self.focus_handle.contains_focused(window, cx);
+        //   Rename editor manages its own focus (gpui-component Input handles it).
+        //   Terminal gets focus only when no rename/menu is active.
+        let has_rename = self.rename_editor.is_some();
+        let has_menu = self.agent_menu.is_some() || self.tab_context_menu.is_some();
+
+        if !has_rename && !has_menu {
+            let should_focus =
+                self.needs_focus || self.focus_handle.contains_focused(window, cx);
             if should_focus {
                 self.needs_focus = false;
                 self.active_terminal()
@@ -359,9 +341,9 @@ impl Render for Pane {
         let mut tabs_area = div().flex().flex_row().flex_1().overflow_hidden();
         for i in 0..self.terminals.len() {
             let is_active = i == self.active_idx;
-            let is_renaming = self.rename_state.as_ref().is_some_and(|(idx, _)| *idx == i);
-
+            let is_renaming = self.rename_idx == Some(i);
             let tab_name = self.tab_name(i);
+
             let mut tab = div()
                 .id(ElementId::Name(format!("term-tab-{i}").into()))
                 .flex()
@@ -373,19 +355,16 @@ impl Render for Pane {
                 .text_size(px(12.0))
                 .border_r_1()
                 .border_color(rgb(theme::BORDER))
-                // Left click: activate, double-click: rename
                 .on_mouse_down(MouseButton::Left, {
-                    let name_for_rename = tab_name.clone();
-                    cx.listener(move |pane, event: &MouseDownEvent, _window, cx| {
+                    cx.listener(move |pane, event: &MouseDownEvent, window, cx| {
                         if event.click_count == 2 {
-                            pane.start_rename(i, cx);
+                            pane.start_rename(i, window, cx);
                         } else {
                             pane.activate_terminal(i);
                         }
                         cx.notify();
                     })
                 })
-                // Right-click: context menu
                 .on_mouse_down(MouseButton::Right, {
                     cx.listener(move |pane, _event, window, cx| {
                         pane.show_tab_context_menu(i, window, cx);
@@ -393,38 +372,26 @@ impl Render for Pane {
                 });
 
             if is_active {
-                tab = tab.bg(rgb(theme::BG_PRIMARY)).text_color(rgb(theme::TEXT_PRIMARY));
+                tab = tab
+                    .bg(rgb(theme::BG_PRIMARY))
+                    .text_color(rgb(theme::TEXT_PRIMARY));
             } else {
-                tab = tab.text_color(rgb(theme::TEXT_DIM));
+                tab = tab
+                    .text_color(rgb(theme::TEXT_DIM))
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)));
             }
 
             if is_renaming {
-                let text = self
-                    .rename_state
-                    .as_ref()
-                    .map(|(_, input)| input.text.clone())
-                    .unwrap_or_default();
-
-                let mut rename_el = div()
-                    .px(px(2.0))
-                    .bg(rgb(theme::BG_SURFACE))
-                    .border_1()
-                    .border_color(rgb(theme::ACCENT))
-                    .rounded(px(2.0))
-                    .text_size(px(12.0))
-                    .text_color(rgb(theme::TEXT_PRIMARY));
-
-                if let Some(ref focus) = self.rename_focus {
-                    rename_el = rename_el
-                        .track_focus(focus)
-                        .on_key_down(cx.listener(Self::on_rename_key));
+                if let Some(ref editor) = self.rename_editor {
+                    tab = tab.child(
+                        Input::new(editor)
+                            .appearance(false)
+                            .bordered(false),
+                    );
                 }
-
-                tab = tab.child(rename_el.child(format!("{text}|")));
             } else {
-                tab = tab.child(tab_name.clone());
+                tab = tab.child(tab_name);
 
-                // Close button
                 if self.terminals.len() > 1 {
                     tab = tab.child(
                         div()
@@ -456,80 +423,48 @@ impl Render for Pane {
             .px(px(4.0))
             .flex_shrink_0()
             .child(
-                div()
-                    .id("pane-new-term")
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(3.0))
-                    .text_size(px(12.0))
-                    .text_color(rgb(theme::TEXT_DIM))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|pane, _event, _window, cx| {
+                theme::icon_button("pane-new-term", theme::icons::PLUS).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|pane, _event, _window, cx| {
                         pane.add_terminal(&mut **cx, None);
                         cx.notify();
-                    }))
-                    .child("+"),
+                    }),
+                ),
             )
             .child(
-                div()
-                    .id("pane-split-h")
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(3.0))
-                    .text_size(px(11.0))
-                    .text_color(rgb(theme::TEXT_DIM))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_pane, _event, window, cx| {
+                theme::icon_button("pane-split-h", theme::icons::SPLIT_H).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_pane, _event, window, cx| {
                         window.dispatch_action(Box::new(SplitRight), cx);
-                    }))
-                    .child("||"),
+                    }),
+                ),
             )
             .child(
-                div()
-                    .id("pane-split-v")
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(3.0))
-                    .text_size(px(11.0))
-                    .text_color(rgb(theme::TEXT_DIM))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_pane, _event, window, cx| {
+                theme::icon_button("pane-split-v", theme::icons::SPLIT_V).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_pane, _event, window, cx| {
                         window.dispatch_action(Box::new(SplitDown), cx);
-                    }))
-                    .child("="),
+                    }),
+                ),
             );
 
         // Zoom toggle
         if self.can_zoom || self.is_zoomed {
             let is_zoomed = self.is_zoomed;
-            let mut zoom_btn = div()
-                .id("pane-zoom")
-                .px(px(6.0))
-                .py(px(2.0))
-                .rounded(px(3.0))
-                .text_size(px(11.0))
-                .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, cx.listener(|_pane, _event, window, cx| {
-                    window.dispatch_action(Box::new(TogglePaneZoom), cx);
-                }));
-            if is_zoomed {
-                zoom_btn = zoom_btn
-                    .bg(rgb(theme::ACCENT))
-                    .text_color(rgb(theme::BG_PRIMARY));
+            let zoom_btn = if is_zoomed {
+                theme::icon_button_active("pane-zoom", theme::icons::MINIMIZE)
             } else {
-                zoom_btn = zoom_btn
-                    .text_color(rgb(theme::TEXT_DIM))
-                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)));
-            }
-            actions = actions.child(zoom_btn.child(
-                if is_zoomed { theme::icons::MINIMIZE } else { theme::icons::MAXIMIZE }
+                theme::icon_button("pane-zoom", theme::icons::MAXIMIZE)
+            };
+            actions = actions.child(zoom_btn.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_pane, _event, window, cx| {
+                    window.dispatch_action(Box::new(TogglePaneZoom), cx);
+                }),
             ));
         }
 
-        // Agent launcher button
+        // Agent launcher
         actions = actions.child(
             div()
                 .id("pane-agent")
@@ -540,9 +475,12 @@ impl Render for Pane {
                 .text_color(rgb(theme::ACCENT_GREEN))
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)))
-                .on_mouse_down(MouseButton::Left, cx.listener(|pane, _event, window, cx| {
-                    pane.toggle_agent_menu(window, cx);
-                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|pane, _event, window, cx| {
+                        pane.toggle_agent_menu(window, cx);
+                    }),
+                )
                 .child(theme::icons::AGENT),
         );
 
@@ -566,7 +504,10 @@ impl Render for Pane {
 
         container = container.child(header);
         container = container.child(
-            div().flex_1().overflow_hidden().child(self.active_terminal().clone()),
+            div()
+                .flex_1()
+                .overflow_hidden()
+                .child(self.active_terminal().clone()),
         );
 
         // Menu overlays

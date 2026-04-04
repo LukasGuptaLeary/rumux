@@ -27,6 +27,8 @@ fn main() {
     let app = Application::new();
 
     app.run(move |cx| {
+        gpui_component::init(cx);
+
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-n", NewWorkspace, None),
             KeyBinding::new("ctrl-shift-w", CloseWorkspace, None),
