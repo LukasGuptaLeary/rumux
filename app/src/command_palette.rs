@@ -62,6 +62,11 @@ impl CommandPalette {
                     shortcut: "Ctrl+Shift+Tab",
                     action: Box::new(PrevWorkspace),
                 },
+                PaletteCommand {
+                    label: "Quit",
+                    shortcut: "Ctrl+Q",
+                    action: Box::new(QuitApp),
+                },
             ],
             focus_handle: cx.focus_handle(),
         }

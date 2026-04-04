@@ -1,6 +1,7 @@
 use gpui::*;
 
 use crate::pane::Pane;
+use crate::session::{self, SessionData, WorkspaceSession};
 use crate::terminal_surface::spawn_terminal_view;
 use crate::workspace::{SplitDirection, Workspace};
 
@@ -15,7 +16,32 @@ impl AppState {
             workspaces: Vec::new(),
             active_workspace_idx: 0,
         };
-        state.add_workspace_inner(cx);
+
+        // Try to restore session
+        if let Ok(Some(session_data)) = session::load_session() {
+            for ws_session in &session_data.workspaces {
+                let cwd = if ws_session.cwd.is_empty() {
+                    None
+                } else {
+                    Some(std::path::Path::new(&ws_session.cwd))
+                };
+                if let Ok(term) = spawn_terminal_view(cx, cwd, None) {
+                    let pane = cx.new(|cx| Pane::new(term, cx));
+                    let ws = cx.new(|_cx| Workspace::new(ws_session.name.clone(), pane));
+                    state.workspaces.push(ws);
+                }
+            }
+            if !state.workspaces.is_empty() {
+                state.active_workspace_idx =
+                    session_data.active_workspace_idx.min(state.workspaces.len() - 1);
+            }
+        }
+
+        // Ensure at least one workspace
+        if state.workspaces.is_empty() {
+            state.add_workspace_inner(cx);
+        }
+
         state
     }
 
@@ -102,6 +128,31 @@ impl AppState {
                     cx.notify();
                 }
             });
+        }
+    }
+
+    pub fn save_session(&self, cx: &App) {
+        let workspaces: Vec<WorkspaceSession> = self
+            .workspaces
+            .iter()
+            .map(|ws| {
+                let ws = ws.read(cx);
+                WorkspaceSession {
+                    name: ws.name.clone(),
+                    cwd: String::new(), // TODO: track cwd per workspace
+                }
+            })
+            .collect();
+
+        let data = SessionData {
+            window_width: 1200.0,
+            window_height: 800.0,
+            workspaces,
+            active_workspace_idx: self.active_workspace_idx,
+        };
+
+        if let Err(e) = session::save_session(&data) {
+            eprintln!("Failed to save session: {e}");
         }
     }
 }

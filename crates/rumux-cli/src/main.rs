@@ -70,6 +70,47 @@ enum Commands {
         /// Shell to generate completions for
         shell: Shell,
     },
+    /// Ping the rumux desktop app via socket
+    Ping {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List capabilities of the rumux desktop app
+    Capabilities {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Identify the rumux desktop app
+    Identify {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Send a notification to the rumux desktop app
+    Notify {
+        /// Notification title
+        #[arg(long)]
+        title: String,
+        /// Notification body
+        #[arg(long)]
+        body: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Send a raw JSON-RPC method to the rumux desktop app
+    Rpc {
+        /// Method name (e.g. "system.ping")
+        method: String,
+        /// JSON params (default: {})
+        #[arg(default_value = "")]
+        params: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() {
@@ -92,6 +133,15 @@ fn main() {
         Commands::Update => commands::update::run(),
         Commands::Version => commands::version::run(),
         Commands::Completions { shell } => commands::completions::run::<Cli>(shell),
+        Commands::Ping { json } => commands::socket_client::run_ping(json),
+        Commands::Capabilities { json } => commands::socket_client::run_capabilities(json),
+        Commands::Identify { json } => commands::socket_client::run_identify(json),
+        Commands::Notify { ref title, ref body, json } => {
+            commands::socket_client::run_notify(title, body, json)
+        }
+        Commands::Rpc { ref method, ref params, json } => {
+            commands::socket_client::run_raw(method, params, json)
+        }
     };
 
     if let Err(e) = result {

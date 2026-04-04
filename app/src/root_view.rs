@@ -20,6 +20,7 @@ actions!(
         NextTerminal,
         PrevTerminal,
         ToggleCommandPalette,
+        QuitApp,
     ]
 );
 
@@ -103,6 +104,10 @@ impl Render for RootView {
                 let ws = root.app_state.read(cx).active_workspace().clone();
                 let focused = ws.read(cx).focused_pane.clone();
                 focused.update(cx, |pane, _cx| pane.prev_terminal());
+            }))
+            .on_action(cx.listener(|root, _: &QuitApp, _window, cx| {
+                root.app_state.read(cx).save_session(cx);
+                cx.quit();
             }))
             .on_action(cx.listener(|root, _: &ToggleCommandPalette, window, cx| {
                 if root.command_palette.is_some() {

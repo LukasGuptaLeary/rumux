@@ -7,4 +7,5 @@ pub mod new;
 pub mod rm;
 pub mod start;
 pub mod update;
+pub mod socket_client;
 pub mod version;

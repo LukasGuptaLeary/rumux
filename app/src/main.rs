@@ -33,6 +33,7 @@ fn main() {
             KeyBinding::new("ctrl-pagedown", NextTerminal, None),
             KeyBinding::new("ctrl-pageup", PrevTerminal, None),
             KeyBinding::new("ctrl-shift-p", ToggleCommandPalette, None),
+            KeyBinding::new("ctrl-q", QuitApp, None),
         ]);
 
         // Start socket server in background
