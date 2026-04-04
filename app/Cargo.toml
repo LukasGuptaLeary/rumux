@@ -1,0 +1,30 @@
+[package]
+name = "rumux-app"
+version = "0.1.0"
+edition = "2024"
+description = "GPU-accelerated desktop terminal for rumux"
+license = "MIT"
+
+[[bin]]
+name = "rumux-app"
+path = "src/main.rs"
+
+[dependencies]
+gpui = "0.2"
+gpui-terminal = { path = "../crates/gpui-terminal" }
+alacritty_terminal = "0.25"
+portable-pty = "0.9"
+rumux-core = { path = "../crates/rumux-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+toml = "0.8"
+fuzzy-matcher = "0.3"
+notify-rust = "4"
+parking_lot = "0.12"
+smol = "2"
+async-net = "2"
+futures-lite = "2"
