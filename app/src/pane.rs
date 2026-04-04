@@ -1,7 +1,7 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::IconName;
-use gpui_component::Sizable;
+use gpui_component::{Selectable, Sizable};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::tab::{Tab, TabBar};
 use gpui_terminal::TerminalView;
@@ -206,17 +206,7 @@ impl Render for Pane {
 
         let mut container = div().size_full().flex().flex_col().track_focus(&self.focus_handle);
 
-        // Header bar
-        let mut header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .h(px(30.0))
-            .bg(rgb(theme::BG_SECONDARY))
-            .border_b_1()
-            .border_color(rgb(theme::BORDER));
-
-        // Terminal tabs using gpui-component TabBar
+        // Terminal tabs using gpui-component TabBar (IS the header)
         let mut tab_bar = TabBar::new("pane-tabs")
             .xsmall()
             .selected_index(self.active_idx)
@@ -229,8 +219,10 @@ impl Render for Pane {
             let is_renaming = self.rename_idx == Some(i);
             let tab_name = self.tab_name(i);
 
+            let is_active = i == self.active_idx;
             let mut tab = Tab::new()
-                .icon(IconName::SquareTerminal);
+                .icon(IconName::SquareTerminal)
+                .selected(is_active);
 
             if is_renaming {
                 if let Some(ref editor) = self.rename_editor {
@@ -347,9 +339,8 @@ impl Render for Pane {
         }
 
         tab_bar = tab_bar.suffix(action_buttons);
-        header = header.child(tab_bar);
 
-        container = container.child(header);
+        container = container.child(tab_bar);
         container = container.child(
             div()
                 .flex_1()
