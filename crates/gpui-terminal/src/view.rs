@@ -411,6 +411,9 @@ pub struct TerminalView {
 
     /// Callback for terminal exit events
     exit_callback: Option<ExitCallback>,
+
+    /// Optional callback invoked with raw PTY output bytes before VTE processing
+    output_callback: Option<Arc<dyn Fn(&[u8]) + Send + Sync>>,
 }
 
 impl TerminalView {
@@ -495,8 +498,11 @@ impl TerminalView {
                 // Wait for bytes from the background reader (blocks until data arrives)
                 match bytes_rx.recv_async().await {
                     Ok(bytes) => {
-                        // Process bytes and notify the view
+                        // Process bytes, invoke output callback, and notify the view
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                            if let Some(ref cb) = view.output_callback {
+                                cb(&bytes);
+                            }
                             view.state.process_bytes(&bytes);
                             cx.notify();
                         });
@@ -532,7 +538,18 @@ impl TerminalView {
             title_callback: None,
             clipboard_store_callback: None,
             exit_callback: None,
+            output_callback: None,
         }
+    }
+
+    /// Write arbitrary bytes to the terminal's PTY stdin.
+    ///
+    /// This allows sending text or escape sequences programmatically
+    /// (e.g., from a socket API or custom command).
+    pub fn write_to_pty(&self, bytes: &[u8]) {
+        let mut writer = self.stdin_writer.lock();
+        let _ = writer.write_all(bytes);
+        let _ = writer.flush();
     }
 
     /// Set a callback to be invoked when the terminal is resized.
@@ -674,6 +691,18 @@ impl TerminalView {
         callback: impl Fn(&mut Window, &mut Context<TerminalView>) + 'static,
     ) -> Self {
         self.exit_callback = Some(Box::new(callback));
+        self
+    }
+
+    /// Set a callback invoked with raw PTY output bytes before VTE processing.
+    ///
+    /// This allows intercepting terminal output for notification detection,
+    /// logging, or other processing without modifying the terminal state.
+    pub fn with_output_callback(
+        mut self,
+        callback: impl Fn(&[u8]) + Send + Sync + 'static,
+    ) -> Self {
+        self.output_callback = Some(Arc::new(callback));
         self
     }
 

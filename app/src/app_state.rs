@@ -1,5 +1,6 @@
 use gpui::*;
 
+use crate::config::RumuxConfig;
 use crate::pane::Pane;
 use crate::session::{self, SessionData, WorkspaceSession};
 use crate::terminal_surface::spawn_terminal_view;
@@ -8,13 +9,16 @@ use crate::workspace::{SplitDirection, Workspace};
 pub struct AppState {
     pub workspaces: Vec<Entity<Workspace>>,
     pub active_workspace_idx: usize,
+    pub config: RumuxConfig,
 }
 
 impl AppState {
     pub fn new(cx: &mut App) -> Self {
+        let config = RumuxConfig::load();
         let mut state = Self {
             workspaces: Vec::new(),
             active_workspace_idx: 0,
+            config,
         };
 
         // Try to restore session

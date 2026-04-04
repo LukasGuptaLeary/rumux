@@ -2,6 +2,7 @@
 
 mod app_state;
 mod command_palette;
+mod config;
 mod notifications;
 mod pane;
 mod root_view;

@@ -5,12 +5,23 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::config::RumuxConfig;
 use crate::theme;
 
 pub fn spawn_terminal_view(
     cx: &mut App,
     cwd: Option<&Path>,
     on_exit: Option<Box<dyn Fn(&mut Window, &mut App) + 'static>>,
+) -> Result<Entity<TerminalView>> {
+    spawn_terminal_view_with_config(cx, cwd, on_exit, None, None)
+}
+
+pub fn spawn_terminal_view_with_config(
+    cx: &mut App,
+    cwd: Option<&Path>,
+    on_exit: Option<Box<dyn Fn(&mut Window, &mut App) + 'static>>,
+    config_override: Option<&RumuxConfig>,
+    output_callback: Option<Arc<dyn Fn(&[u8]) + Send + Sync>>,
 ) -> Result<Entity<TerminalView>> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
@@ -37,12 +48,18 @@ pub fn spawn_terminal_view(
     let pty_master = Arc::new(parking_lot::Mutex::new(pair.master));
     drop(pair.slave);
 
+    let font_family = config_override
+        .map(|c| c.font_family.clone())
+        .unwrap_or_else(|| "JetBrains Mono".to_string());
+    let font_size_val = config_override.map(|c| c.font_size).unwrap_or(14.0);
+    let scrollback = config_override.map(|c| c.scrollback).unwrap_or(10_000);
+
     let config = TerminalConfig {
-        font_family: "JetBrains Mono".into(),
-        font_size: px(14.0),
+        font_family,
+        font_size: px(font_size_val),
         cols: 80,
         rows: 24,
-        scrollback: 10_000,
+        scrollback,
         line_height_multiplier: 1.0,
         padding: Edges::all(px(4.0)),
         colors: theme::catppuccin_mocha(),
@@ -64,6 +81,10 @@ pub fn spawn_terminal_view(
 
         if let Some(exit_cb) = on_exit {
             view = view.with_exit_callback(move |window, cx| exit_cb(window, cx));
+        }
+
+        if let Some(output_cb) = output_callback {
+            view = view.with_output_callback(move |bytes| output_cb(bytes));
         }
 
         view
