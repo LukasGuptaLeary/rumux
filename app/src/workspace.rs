@@ -27,6 +27,8 @@ pub struct Workspace {
     pub unread_count: usize,
     pub zoomed: bool,
     pub color: Option<u32>,
+    pub git_branch: Option<String>,
+    pub cwd: Option<String>,
 }
 
 impl Workspace {
@@ -39,6 +41,8 @@ impl Workspace {
             unread_count: 0,
             zoomed: false,
             color: None,
+            git_branch: None,
+            cwd: None,
         }
     }
 

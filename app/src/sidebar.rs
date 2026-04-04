@@ -86,6 +86,7 @@ impl Render for Sidebar {
             let is_active = i == active_idx;
             let unread = ws.unread_count;
             let ws_color = ws.color.unwrap_or(theme::ACCENT);
+            let git_branch = ws.git_branch.clone();
             let is_renaming = self.rename_state.as_ref().is_some_and(|(idx, _)| *idx == i);
 
             let mut tab = div()
@@ -207,6 +208,18 @@ impl Render for Sidebar {
             };
 
             tab = tab.child(content);
+
+            // Git branch (below name)
+            if let Some(ref branch) = git_branch {
+                tab = tab.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::TEXT_DIM))
+                        .overflow_hidden()
+                        .child(branch.clone()),
+                );
+            }
+
             tabs = tabs.child(tab);
         }
 

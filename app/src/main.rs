@@ -67,14 +67,53 @@ fn main() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let root = cx.new(|cx| RootView::new(app_state, cx));
+                    let root = cx.new(|cx| RootView::new(app_state.clone(), cx));
                     root.read(cx).focus_handle.focus(window);
                     root
                 },
             )?;
 
+            // Git branch polling task (every 3 seconds)
+            let state_for_git = app_state.downgrade();
+            cx.spawn(async move |cx: &mut AsyncApp| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(3))
+                        .await;
+
+                    let result = state_for_git.update(cx, |state, cx| {
+                        detect_git_branches(state, cx);
+                    });
+                    if result.is_err() {
+                        break;
+                    }
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .detach();
+
             Ok::<_, anyhow::Error>(())
         })
         .detach();
     });
+}
+
+fn detect_git_branches(state: &mut AppState, cx: &mut gpui::Context<AppState>) {
+    for ws in &state.workspaces {
+        ws.update(cx, |ws, cx| {
+            // Try to detect git branch from CWD
+            let cwd = ws.cwd.as_deref().unwrap_or(".");
+            let branch = detect_branch(cwd);
+            if ws.git_branch != branch {
+                ws.git_branch = branch;
+                cx.notify();
+            }
+        });
+    }
+}
+
+fn detect_branch(path: &str) -> Option<String> {
+    let repo = git2::Repository::discover(path).ok()?;
+    let head = repo.head().ok()?;
+    head.shorthand().map(|s| s.to_string())
 }
