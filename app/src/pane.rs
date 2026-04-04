@@ -63,6 +63,37 @@ impl Pane {
         self.close_terminal(self.active_idx)
     }
 
+    pub fn close_others(&mut self, keep_idx: usize) {
+        if keep_idx >= self.terminals.len() {
+            return;
+        }
+        let term = self.terminals.remove(keep_idx);
+        let name = self.names.remove(keep_idx);
+        self.terminals.clear();
+        self.names.clear();
+        self.terminals.push(term);
+        self.names.push(name);
+        self.active_idx = 0;
+    }
+
+    pub fn close_to_right(&mut self, idx: usize) {
+        if idx + 1 < self.terminals.len() {
+            self.terminals.truncate(idx + 1);
+            self.names.truncate(idx + 1);
+            if self.active_idx > idx {
+                self.active_idx = idx;
+            }
+        }
+    }
+
+    pub fn close_to_left(&mut self, idx: usize) {
+        if idx > 0 && idx < self.terminals.len() {
+            self.terminals.drain(..idx);
+            self.names.drain(..idx);
+            self.active_idx = self.active_idx.saturating_sub(idx);
+        }
+    }
+
     pub fn activate_terminal(&mut self, idx: usize) {
         if idx < self.terminals.len() {
             self.active_idx = idx;
@@ -247,6 +278,26 @@ impl Render for Pane {
                             })
                             .child("x"),
                     );
+
+                    // Context actions on active tab with 3+ terminals
+                    if is_active && self.terminals.len() >= 3 {
+                        // Close Others
+                        tab = tab.child(
+                            div()
+                                .id(ElementId::Name(format!("term-close-others-{i}").into()))
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::TEXT_DIM))
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(rgb(theme::ACCENT_RED)))
+                                .on_mouse_down(MouseButton::Left, {
+                                    cx.listener(move |pane, _event, _window, cx| {
+                                        pane.close_others(i);
+                                        cx.notify();
+                                    })
+                                })
+                                .child("xO"),
+                        );
+                    }
                 }
             }
 

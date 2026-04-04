@@ -78,6 +78,11 @@ impl CommandPalette {
                     action: Box::new(TogglePaneZoom),
                 },
                 PaletteCommand {
+                    label: "Find in Terminal",
+                    shortcut: "Ctrl+F",
+                    action: Box::new(ToggleFindBar),
+                },
+                PaletteCommand {
                     label: "Notifications",
                     shortcut: "Ctrl+Shift+I",
                     action: Box::new(ToggleNotificationPanel),

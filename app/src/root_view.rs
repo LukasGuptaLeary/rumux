@@ -2,6 +2,7 @@ use gpui::*;
 
 use crate::app_state::AppState;
 use crate::command_palette::CommandPalette;
+use crate::find_bar::FindBar;
 use crate::notification_panel::NotificationPanel;
 use crate::sidebar::Sidebar;
 use crate::theme;
@@ -26,6 +27,7 @@ actions!(
         TogglePaneZoom,
         JumpToUnread,
         DuplicateWorkspace,
+        ToggleFindBar,
         QuitApp,
     ]
 );
@@ -35,6 +37,7 @@ pub struct RootView {
     sidebar: Entity<Sidebar>,
     command_palette: Option<Entity<CommandPalette>>,
     notification_panel: Option<Entity<NotificationPanel>>,
+    find_bar: Option<Entity<FindBar>>,
     sidebar_visible: bool,
     pub focus_handle: FocusHandle,
 }
@@ -48,6 +51,7 @@ impl RootView {
             sidebar,
             command_palette: None,
             notification_panel: None,
+            find_bar: None,
             sidebar_visible,
             focus_handle: cx.focus_handle(),
         }
@@ -172,6 +176,17 @@ impl Render for RootView {
                         break;
                     }
                 }
+            }))
+            .on_action(cx.listener(|root, _: &ToggleFindBar, window, cx| {
+                if root.find_bar.is_some() {
+                    root.find_bar = None;
+                    root.focus_handle.focus(window);
+                } else {
+                    let bar = cx.new(|cx| FindBar::new(cx));
+                    bar.read(cx).focus_handle.focus(window);
+                    root.find_bar = Some(bar);
+                }
+                cx.notify();
             }));
 
         // Sidebar or expand button
@@ -214,6 +229,9 @@ impl Render for RootView {
         }
         if let Some(palette) = &self.command_palette {
             container = container.child(palette.clone());
+        }
+        if let Some(bar) = &self.find_bar {
+            container = container.child(bar.clone());
         }
 
         container

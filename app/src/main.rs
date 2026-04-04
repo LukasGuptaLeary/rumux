@@ -4,6 +4,7 @@ mod app_state;
 mod command_palette;
 mod config;
 mod custom_commands;
+mod find_bar;
 mod notification_panel;
 mod notifications;
 mod pane;
@@ -42,6 +43,7 @@ fn main() {
             KeyBinding::new("ctrl-shift-enter", TogglePaneZoom, None),
             KeyBinding::new("ctrl-shift-u", JumpToUnread, None),
             KeyBinding::new("ctrl-shift-c", DuplicateWorkspace, None),
+            KeyBinding::new("ctrl-f", ToggleFindBar, None),
             KeyBinding::new("ctrl-q", QuitApp, None),
         ]);
 
