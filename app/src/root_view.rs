@@ -152,7 +152,7 @@ impl Render for RootView {
             .on_action(cx.listener(|root, _: &TogglePaneZoom, _window, cx| {
                 let ws = root.app_state.read(cx).active_workspace().clone();
                 ws.update(cx, |ws, cx| {
-                    ws.toggle_zoom();
+                    ws.toggle_zoom(&mut **cx);
                     cx.notify();
                 });
                 cx.notify();
@@ -169,9 +169,35 @@ impl Render for RootView {
                 }
             }));
 
-        // Sidebar
+        // Sidebar or expand button
         if self.sidebar_visible {
             container = container.child(self.sidebar.clone());
+        } else {
+            container = container.child(
+                div()
+                    .id("sidebar-expand")
+                    .w(px(24.0))
+                    .h_full()
+                    .flex_shrink_0()
+                    .bg(rgb(theme::BG_SECONDARY))
+                    .border_r_1()
+                    .border_color(rgb(theme::BORDER))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|root, _event, _window, cx| {
+                        root.sidebar_visible = true;
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(theme::TEXT_DIM))
+                            .child(">"),
+                    ),
+            );
         }
 
         // Main content

@@ -56,8 +56,20 @@ impl Workspace {
         }
     }
 
-    pub fn toggle_zoom(&mut self) {
+    pub fn toggle_zoom(&mut self, cx: &mut App) {
         self.zoomed = !self.zoomed;
+        // Update the focused pane's is_zoomed flag
+        self.focused_pane.update(cx, |pane, _cx| {
+            pane.is_zoomed = self.zoomed;
+        });
+        // If un-zooming, clear zoom flag on all panes
+        if !self.zoomed {
+            for pane in self.panes() {
+                pane.update(cx, |pane, _cx| {
+                    pane.is_zoomed = false;
+                });
+            }
+        }
     }
 
     pub fn panes(&self) -> Vec<Entity<Pane>> {

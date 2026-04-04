@@ -1,7 +1,7 @@
 use gpui::*;
 use gpui_terminal::TerminalView;
 
-use crate::root_view::{SplitDown, SplitRight};
+use crate::root_view::{SplitDown, SplitRight, TogglePaneZoom};
 use crate::terminal_surface::spawn_terminal_view;
 use crate::theme;
 
@@ -9,6 +9,7 @@ pub struct Pane {
     terminals: Vec<Entity<TerminalView>>,
     active_idx: usize,
     focus_handle: FocusHandle,
+    pub is_zoomed: bool,
 }
 
 impl Pane {
@@ -17,6 +18,7 @@ impl Pane {
             terminals: vec![terminal],
             active_idx: 0,
             focus_handle: cx.focus_handle(),
+            is_zoomed: false,
         }
     }
 
@@ -205,9 +207,52 @@ impl Render for Pane {
                         window.dispatch_action(Box::new(SplitDown), cx);
                     }))
                     .child("="),
-            );
+            )
+            // Zoom toggle
+            .child({
+                let is_zoomed = self.is_zoomed;
+                let mut zoom_btn = div()
+                    .id("pane-zoom")
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(3.0))
+                    .text_size(px(11.0))
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|_pane, _event, window, cx| {
+                        window.dispatch_action(Box::new(TogglePaneZoom), cx);
+                    }));
+                if is_zoomed {
+                    zoom_btn = zoom_btn
+                        .bg(rgb(theme::ACCENT))
+                        .text_color(rgb(theme::BG_PRIMARY))
+                        .hover(|s| s.bg(rgb(theme::ACCENT)));
+                } else {
+                    zoom_btn = zoom_btn
+                        .text_color(rgb(theme::TEXT_DIM))
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)));
+                }
+                zoom_btn.child(if is_zoomed { "[x]" } else { "[ ]" })
+            });
 
         header = header.child(actions);
+
+        // Zoom indicator bar
+        if self.is_zoomed {
+            header = header.child(
+                div()
+                    .flex_shrink_0()
+                    .px(px(8.0))
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .bg(rgb(theme::ACCENT))
+                    .text_color(rgb(theme::BG_PRIMARY))
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("ZOOMED"),
+            );
+        }
+
         container = container.child(header);
 
         // Terminal content
