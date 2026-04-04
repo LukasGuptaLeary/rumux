@@ -3,6 +3,8 @@
 mod app_state;
 mod command_palette;
 mod config;
+mod custom_commands;
+mod notification_panel;
 mod notifications;
 mod pane;
 mod root_view;
@@ -34,6 +36,10 @@ fn main() {
             KeyBinding::new("ctrl-pagedown", NextTerminal, None),
             KeyBinding::new("ctrl-pageup", PrevTerminal, None),
             KeyBinding::new("ctrl-shift-p", ToggleCommandPalette, None),
+            KeyBinding::new("ctrl-shift-i", ToggleNotificationPanel, None),
+            KeyBinding::new("ctrl-b", ToggleSidebar, None),
+            KeyBinding::new("ctrl-shift-enter", TogglePaneZoom, None),
+            KeyBinding::new("ctrl-shift-u", JumpToUnread, None),
             KeyBinding::new("ctrl-q", QuitApp, None),
         ]);
 

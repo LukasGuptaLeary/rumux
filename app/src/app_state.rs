@@ -10,6 +10,7 @@ pub struct AppState {
     pub workspaces: Vec<Entity<Workspace>>,
     pub active_workspace_idx: usize,
     pub config: RumuxConfig,
+    pub notifications: Vec<crate::notifications::Notification>,
 }
 
 impl AppState {
@@ -19,6 +20,7 @@ impl AppState {
             workspaces: Vec::new(),
             active_workspace_idx: 0,
             config,
+            notifications: Vec::new(),
         };
 
         // Try to restore session

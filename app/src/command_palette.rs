@@ -63,6 +63,26 @@ impl CommandPalette {
                     action: Box::new(PrevWorkspace),
                 },
                 PaletteCommand {
+                    label: "Toggle Sidebar",
+                    shortcut: "Ctrl+B",
+                    action: Box::new(ToggleSidebar),
+                },
+                PaletteCommand {
+                    label: "Toggle Pane Zoom",
+                    shortcut: "Ctrl+Shift+Enter",
+                    action: Box::new(TogglePaneZoom),
+                },
+                PaletteCommand {
+                    label: "Notifications",
+                    shortcut: "Ctrl+Shift+I",
+                    action: Box::new(ToggleNotificationPanel),
+                },
+                PaletteCommand {
+                    label: "Jump to Unread",
+                    shortcut: "Ctrl+Shift+U",
+                    action: Box::new(JumpToUnread),
+                },
+                PaletteCommand {
                     label: "Quit",
                     shortcut: "Ctrl+Q",
                     action: Box::new(QuitApp),

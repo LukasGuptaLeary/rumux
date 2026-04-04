@@ -25,6 +25,8 @@ pub struct Workspace {
     pub layout: LayoutNode,
     pub focused_pane: Entity<Pane>,
     pub unread_count: usize,
+    pub zoomed: bool,
+    pub color: Option<u32>,
 }
 
 impl Workspace {
@@ -35,6 +37,8 @@ impl Workspace {
             layout: LayoutNode::Leaf(pane),
             focused_pane: focused,
             unread_count: 0,
+            zoomed: false,
+            color: None,
         }
     }
 
@@ -50,6 +54,10 @@ impl Workspace {
             );
             self.focused_pane = new_pane;
         }
+    }
+
+    pub fn toggle_zoom(&mut self) {
+        self.zoomed = !self.zoomed;
     }
 
     pub fn panes(&self) -> Vec<Entity<Pane>> {
@@ -180,10 +188,15 @@ pub fn remove_pane_from_layout(node: LayoutNode, target: &Entity<Pane>) -> Optio
 
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let layout = self.render_layout_node(&self.layout, cx);
+        let content = if self.zoomed {
+            // Show only the focused pane
+            div().size_full().child(self.focused_pane.clone())
+        } else {
+            self.render_layout_node(&self.layout, cx)
+        };
         div()
             .size_full()
             .bg(rgb(theme::BG_PRIMARY))
-            .child(layout)
+            .child(content)
     }
 }
