@@ -11,27 +11,34 @@ pub struct AppState {
     pub active_workspace_idx: usize,
     pub config: RumuxConfig,
     pub notifications: Vec<crate::notifications::Notification>,
+    pub default_cwd: std::path::PathBuf,
 }
 
 impl AppState {
     pub fn new(cx: &mut App) -> Self {
         let config = RumuxConfig::load();
+        let default_cwd = std::env::current_dir().unwrap_or_else(|_| {
+            std::env::var("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+        });
         let mut state = Self {
             workspaces: Vec::new(),
             active_workspace_idx: 0,
             config,
             notifications: Vec::new(),
+            default_cwd: default_cwd.clone(),
         };
 
         // Try to restore session
         if let Ok(Some(session_data)) = session::load_session() {
             for ws_session in &session_data.workspaces {
-                let cwd = if ws_session.cwd.is_empty() {
-                    None
+                let cwd_path = if ws_session.cwd.is_empty() {
+                    default_cwd.clone()
                 } else {
-                    Some(std::path::Path::new(&ws_session.cwd))
+                    std::path::PathBuf::from(&ws_session.cwd)
                 };
-                if let Ok(term) = spawn_terminal_view(cx, cwd, None) {
+                if let Ok(term) = spawn_terminal_view(cx, Some(&cwd_path), None) {
                     let pane = cx.new(|cx| Pane::new(term, cx));
                     let ws = cx.new(|_cx| Workspace::new(ws_session.name.clone(), pane));
                     state.workspaces.push(ws);
@@ -54,11 +61,14 @@ impl AppState {
     fn add_workspace_inner(&mut self, cx: &mut App) {
         let name = format!("Workspace {}", self.workspaces.len() + 1);
         let color_idx = self.workspaces.len() % crate::theme::WORKSPACE_COLORS.len();
-        if let Ok(term) = spawn_terminal_view(cx, None, None) {
+        let cwd = self.default_cwd.clone();
+        if let Ok(term) = spawn_terminal_view(cx, Some(&cwd), None) {
             let pane = cx.new(|cx| Pane::new(term, cx));
+            let cwd_str = cwd.to_string_lossy().to_string();
             let ws = cx.new(|_cx| {
                 let mut w = Workspace::new(name, pane);
                 w.color = Some(crate::theme::WORKSPACE_COLORS[color_idx]);
+                w.cwd = Some(cwd_str);
                 w
             });
             self.active_workspace_idx = self.workspaces.len();
@@ -74,9 +84,13 @@ impl AppState {
     pub fn duplicate_workspace(&mut self, cx: &mut Context<Self>) {
         let current = self.active_workspace().clone();
         let current_name = current.read(cx).name.clone();
+        let current_cwd = current.read(cx).cwd.clone();
         let new_name = format!("{current_name} (copy)");
         let color_idx = self.workspaces.len() % crate::theme::WORKSPACE_COLORS.len();
-        if let Ok(term) = spawn_terminal_view(&mut **cx, None, None) {
+        let cwd_path = current_cwd
+            .as_deref()
+            .map(std::path::Path::new);
+        if let Ok(term) = spawn_terminal_view(&mut **cx, cwd_path, None) {
             let pane = cx.new(|cx| Pane::new(term, cx));
             let ws = cx.new(|_cx| {
                 let mut w = Workspace::new(new_name, pane);
@@ -122,9 +136,11 @@ impl AppState {
 
     pub fn add_terminal_to_active(&mut self, cx: &mut Context<Self>) {
         let ws = self.active_workspace().clone();
+        let cwd = ws.read(cx).cwd.clone();
         let focused = ws.read(cx).focused_pane.clone();
+        let cwd_path = cwd.as_deref().map(std::path::Path::new);
         focused.update(cx, |pane, cx| {
-            pane.add_terminal(&mut **cx);
+            pane.add_terminal(&mut **cx, cwd_path);
             cx.notify();
         });
     }
@@ -168,7 +184,7 @@ impl AppState {
                 let ws = ws.read(cx);
                 WorkspaceSession {
                     name: ws.name.clone(),
-                    cwd: String::new(), // TODO: track cwd per workspace
+                    cwd: ws.cwd.clone().unwrap_or_default(),
                 }
             })
             .collect();

@@ -48,7 +48,8 @@ impl Workspace {
 
     pub fn split(&mut self, direction: SplitDirection, cx: &mut App) {
         let focused = self.focused_pane.clone();
-        if let Ok(term) = spawn_terminal_view(cx, None, None) {
+        let cwd_path = self.cwd.as_deref().map(std::path::Path::new);
+        if let Ok(term) = spawn_terminal_view(cx, cwd_path, None) {
             let new_pane = cx.new(|cx| Pane::new(term, cx));
             self.layout = replace_pane_with_split(
                 std::mem::replace(&mut self.layout, LayoutNode::Leaf(focused.clone())),

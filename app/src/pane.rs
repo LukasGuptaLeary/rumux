@@ -39,8 +39,8 @@ impl Pane {
         self.terminals.len()
     }
 
-    pub fn add_terminal(&mut self, cx: &mut App) {
-        if let Ok(term) = spawn_terminal_view(cx, None, None) {
+    pub fn add_terminal(&mut self, cx: &mut App, cwd: Option<&std::path::Path>) {
+        if let Ok(term) = spawn_terminal_view(cx, cwd, None) {
             self.terminals.push(term);
             self.names.push(None);
             self.active_idx = self.terminals.len() - 1;
@@ -272,7 +272,7 @@ impl Render for Pane {
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)))
                     .on_mouse_down(MouseButton::Left, cx.listener(|pane, _event, _window, cx| {
-                        pane.add_terminal(&mut **cx);
+                        pane.add_terminal(&mut **cx, None);
                         cx.notify();
                     }))
                     .child("+"),
