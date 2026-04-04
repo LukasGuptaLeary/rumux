@@ -10,6 +10,7 @@ pub struct Sidebar {
     app_state: Entity<AppState>,
     rename_state: Option<(usize, TextInputState)>,
     rename_focus: Option<FocusHandle>,
+    rename_needs_focus: bool,
     _rename_focus_sub: Option<gpui::Subscription>,
     context_menu: Option<(usize, Entity<DropdownMenu>)>,
 }
@@ -20,6 +21,7 @@ impl Sidebar {
             app_state,
             rename_state: None,
             rename_focus: None,
+            rename_needs_focus: false,
             _rename_focus_sub: None,
             context_menu: None,
         }
@@ -31,6 +33,7 @@ impl Sidebar {
         let focus = cx.focus_handle();
         self.rename_state = Some((idx, TextInputState::new(name)));
         self.rename_focus = Some(focus);
+        self.rename_needs_focus = true;
         // on_focus_out subscription set up in render() where we have Window
         cx.notify();
     }
@@ -60,6 +63,7 @@ impl Sidebar {
     fn clear_rename(&mut self, cx: &mut Context<Self>) {
         self.rename_state = None;
         self.rename_focus = None;
+        self.rename_needs_focus = false;
         self._rename_focus_sub = None;
         cx.notify();
     }
@@ -157,6 +161,14 @@ impl Render for Sidebar {
             }
         }
 
+        // One-shot focus for rename input
+        if self.rename_needs_focus {
+            if let Some(ref focus) = self.rename_focus {
+                focus.focus(window);
+                self.rename_needs_focus = false;
+            }
+        }
+
         let state = self.app_state.read(cx);
         let active_idx = state.active_workspace_idx;
         let ws_count = state.workspaces.len();
@@ -184,11 +196,7 @@ impl Render for Sidebar {
                     let name_for_rename = name.clone();
                     cx.listener(move |sidebar, event: &MouseDownEvent, window, cx| {
                         if event.click_count == 2 {
-                            // Double-click: rename
                             sidebar.start_rename(i, &name_for_rename, cx);
-                            if let Some(ref focus) = sidebar.rename_focus {
-                                focus.focus(window);
-                            }
                         } else {
                             // Single click: switch workspace
                             app_state.update(cx, |state, cx| {

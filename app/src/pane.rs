@@ -22,6 +22,7 @@ pub struct Pane {
     pub can_zoom: bool,
     rename_state: Option<(usize, TextInputState)>,
     rename_focus: Option<FocusHandle>,
+    rename_needs_focus: bool,
     _rename_focus_sub: Option<gpui::Subscription>,
     agent_menu: Option<Entity<DropdownMenu>>,
     tab_context_menu: Option<(usize, Entity<DropdownMenu>)>,
@@ -39,6 +40,7 @@ impl Pane {
             can_zoom: false,
             rename_state: None,
             rename_focus: None,
+            rename_needs_focus: false,
             _rename_focus_sub: None,
             agent_menu: None,
             tab_context_menu: None,
@@ -153,7 +155,7 @@ impl Pane {
         let focus = cx.focus_handle();
         self.rename_state = Some((idx, TextInputState::new(&current)));
         self.rename_focus = Some(focus);
-        // on_focus_out subscription will be set up in render() where we have Window
+        self.rename_needs_focus = true;
         cx.notify();
     }
 
@@ -174,6 +176,7 @@ impl Pane {
     fn clear_rename(&mut self, cx: &mut Context<Self>) {
         self.rename_state = None;
         self.rename_focus = None;
+        self.rename_needs_focus = false;
         self._rename_focus_sub = None;
         self.needs_focus = true;
         cx.notify();
@@ -312,11 +315,15 @@ impl Render for Pane {
         //   2. Dropdown menus manage their own focus via track_focus
         //   3. Terminal gets focus ONLY when the pane contains focus AND
         //      no overlay is active.
-        if self.rename_state.is_some() {
+        if self.rename_state.is_some() && self.rename_needs_focus {
             if let Some(ref focus) = self.rename_focus {
                 focus.focus(window);
+                self.rename_needs_focus = false;
             }
-        } else if self.agent_menu.is_none() && self.tab_context_menu.is_none() {
+        } else if self.rename_state.is_none()
+            && self.agent_menu.is_none()
+            && self.tab_context_menu.is_none()
+        {
             // Focus terminal if: first render (needs_focus) OR pane already has focus.
             // This prevents stealing focus from sidebar, command palette, etc.
             let should_focus = self.needs_focus
