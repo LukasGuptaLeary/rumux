@@ -73,9 +73,10 @@ fn main() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let root = cx.new(|cx| RootView::new(app_state.clone(), cx));
-                    root.read(cx).focus_handle.focus(window);
-                    root
+                    let root_view = cx.new(|cx| RootView::new(app_state.clone(), cx));
+                    root_view.read(cx).focus_handle.focus(window);
+                    // Wrap in gpui-component's Root for Input, Dialog, Notification support
+                    cx.new(|cx| gpui_component::Root::new(root_view, window, cx))
                 },
             )?;
 
