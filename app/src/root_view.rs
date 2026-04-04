@@ -1,5 +1,8 @@
 use gpui::*;
 
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::IconName;
+
 use crate::app_state::AppState;
 use crate::command_palette::CommandPalette;
 use crate::find_bar::FindBar;
@@ -195,8 +198,7 @@ impl Render for RootView {
         } else {
             container = container.child(
                 div()
-                    .id("sidebar-expand")
-                    .w(px(24.0))
+                    .w(px(28.0))
                     .h_full()
                     .flex_shrink_0()
                     .bg(rgb(theme::BG_SECONDARY))
@@ -205,17 +207,15 @@ impl Render for RootView {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|root, _event, _window, cx| {
-                        root.sidebar_visible = true;
-                        cx.notify();
-                    }))
                     .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(rgb(theme::TEXT_DIM))
-                            .child(">"),
+                        Button::new("root-btn-1")
+                            .ghost()
+                            .compact()
+                            .icon(IconName::PanelLeftOpen)
+                            .on_click(cx.listener(|root, _event, _window, cx| {
+                                root.sidebar_visible = true;
+                                cx.notify();
+                            })),
                     ),
             );
         }
