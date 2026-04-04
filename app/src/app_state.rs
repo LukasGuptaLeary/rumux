@@ -53,9 +53,14 @@ impl AppState {
 
     fn add_workspace_inner(&mut self, cx: &mut App) {
         let name = format!("Workspace {}", self.workspaces.len() + 1);
+        let color_idx = self.workspaces.len() % crate::theme::WORKSPACE_COLORS.len();
         if let Ok(term) = spawn_terminal_view(cx, None, None) {
             let pane = cx.new(|cx| Pane::new(term, cx));
-            let ws = cx.new(|_cx| Workspace::new(name, pane));
+            let ws = cx.new(|_cx| {
+                let mut w = Workspace::new(name, pane);
+                w.color = Some(crate::theme::WORKSPACE_COLORS[color_idx]);
+                w
+            });
             self.active_workspace_idx = self.workspaces.len();
             self.workspaces.push(ws);
         }
@@ -64,6 +69,24 @@ impl AppState {
     pub fn add_workspace(&mut self, cx: &mut Context<Self>) {
         self.add_workspace_inner(&mut **cx);
         cx.notify();
+    }
+
+    pub fn duplicate_workspace(&mut self, cx: &mut Context<Self>) {
+        let current = self.active_workspace().clone();
+        let current_name = current.read(cx).name.clone();
+        let new_name = format!("{current_name} (copy)");
+        let color_idx = self.workspaces.len() % crate::theme::WORKSPACE_COLORS.len();
+        if let Ok(term) = spawn_terminal_view(&mut **cx, None, None) {
+            let pane = cx.new(|cx| Pane::new(term, cx));
+            let ws = cx.new(|_cx| {
+                let mut w = Workspace::new(new_name, pane);
+                w.color = Some(crate::theme::WORKSPACE_COLORS[color_idx]);
+                w
+            });
+            self.active_workspace_idx = self.workspaces.len();
+            self.workspaces.push(ws);
+            cx.notify();
+        }
     }
 
     pub fn close_workspace(&mut self, idx: usize, cx: &mut Context<Self>) {

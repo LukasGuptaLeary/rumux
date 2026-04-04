@@ -3,24 +3,31 @@ use gpui_terminal::TerminalView;
 
 use crate::root_view::{SplitDown, SplitRight, TogglePaneZoom};
 use crate::terminal_surface::spawn_terminal_view;
+use crate::text_input::{TextInputAction, TextInputState};
 use crate::theme;
 
 pub struct Pane {
     terminals: Vec<Entity<TerminalView>>,
+    names: Vec<Option<String>>,
     active_idx: usize,
     focus_handle: FocusHandle,
     pub is_zoomed: bool,
     pub can_zoom: bool,
+    rename_state: Option<(usize, TextInputState)>,
+    rename_focus: Option<FocusHandle>,
 }
 
 impl Pane {
     pub fn new(terminal: Entity<TerminalView>, cx: &mut Context<Self>) -> Self {
         Self {
             terminals: vec![terminal],
+            names: vec![None],
             active_idx: 0,
             focus_handle: cx.focus_handle(),
             is_zoomed: false,
             can_zoom: false,
+            rename_state: None,
+            rename_focus: None,
         }
     }
 
@@ -35,15 +42,17 @@ impl Pane {
     pub fn add_terminal(&mut self, cx: &mut App) {
         if let Ok(term) = spawn_terminal_view(cx, None, None) {
             self.terminals.push(term);
+            self.names.push(None);
             self.active_idx = self.terminals.len() - 1;
         }
     }
 
     pub fn close_terminal(&mut self, idx: usize) -> bool {
         if self.terminals.len() <= 1 {
-            return true; // pane should be removed
+            return true;
         }
         self.terminals.remove(idx);
+        self.names.remove(idx);
         if self.active_idx >= self.terminals.len() {
             self.active_idx = self.terminals.len() - 1;
         }
@@ -79,11 +88,56 @@ impl Pane {
     pub fn focus_handle(&self) -> &FocusHandle {
         &self.focus_handle
     }
+
+    fn tab_name(&self, idx: usize) -> String {
+        self.names[idx]
+            .clone()
+            .unwrap_or_else(|| format!("Terminal {}", idx + 1))
+    }
+
+    fn start_rename(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let current = self.tab_name(idx);
+        self.rename_state = Some((idx, TextInputState::new(&current)));
+        self.rename_focus = Some(cx.focus_handle());
+        cx.notify();
+    }
+
+    fn finish_rename(&mut self, cx: &mut Context<Self>) {
+        if let Some((idx, ref input)) = self.rename_state {
+            let new = input.text.trim().to_string();
+            if idx < self.names.len() {
+                self.names[idx] = if new.is_empty() { None } else { Some(new) };
+            }
+        }
+        self.rename_state = None;
+        self.rename_focus = None;
+        cx.notify();
+    }
+
+    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        self.rename_state = None;
+        self.rename_focus = None;
+        cx.notify();
+    }
+
+    fn on_rename_key(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((_idx, ref mut input)) = self.rename_state {
+            match input.handle_key(&event.keystroke.key, event.keystroke.modifiers.control) {
+                TextInputAction::Confirm => self.finish_rename(cx),
+                TextInputAction::Cancel => self.cancel_rename(cx),
+                _ => cx.notify(),
+            }
+        }
+    }
 }
 
 impl Render for Pane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Focus the active terminal
         self.active_terminal()
             .read(cx)
             .focus_handle()
@@ -91,7 +145,7 @@ impl Render for Pane {
 
         let mut container = div().size_full().flex().flex_col().track_focus(&self.focus_handle);
 
-        // Header bar with tabs + action buttons
+        // Header bar
         let mut header = div()
             .flex()
             .flex_row()
@@ -105,12 +159,14 @@ impl Render for Pane {
         let mut tabs_area = div().flex().flex_row().flex_1().overflow_hidden();
         for i in 0..self.terminals.len() {
             let is_active = i == self.active_idx;
+            let is_renaming = self.rename_state.as_ref().is_some_and(|(idx, _)| *idx == i);
+
             let mut tab = div()
                 .id(ElementId::Name(format!("term-tab-{i}").into()))
                 .flex()
                 .items_center()
-                .gap(px(6.0))
-                .px(px(10.0))
+                .gap(px(4.0))
+                .px(px(8.0))
                 .h_full()
                 .cursor_pointer()
                 .text_size(px(12.0))
@@ -129,39 +185,82 @@ impl Render for Pane {
                 tab = tab.text_color(rgb(theme::TEXT_DIM));
             }
 
-            tab = tab.child(format!("Terminal {}", i + 1));
+            if is_renaming {
+                let text = self
+                    .rename_state
+                    .as_ref()
+                    .map(|(_, input)| input.text.clone())
+                    .unwrap_or_default();
 
-            // Close button per tab (only if multiple)
-            if self.terminals.len() > 1 {
+                let mut rename_el = div()
+                    .px(px(2.0))
+                    .bg(rgb(theme::BG_SURFACE))
+                    .border_1()
+                    .border_color(rgb(theme::ACCENT))
+                    .rounded(px(2.0))
+                    .text_size(px(12.0))
+                    .text_color(rgb(theme::TEXT_PRIMARY));
+
+                if let Some(ref focus) = self.rename_focus {
+                    rename_el = rename_el
+                        .track_focus(focus)
+                        .on_key_down(cx.listener(Self::on_rename_key));
+                }
+
+                tab = tab.child(rename_el.child(format!("{text}|")));
+            } else {
+                tab = tab.child(self.tab_name(i));
+
+                // Rename button
                 tab = tab.child(
                     div()
-                        .id(ElementId::Name(format!("term-close-{i}").into()))
-                        .text_size(px(10.0))
+                        .id(ElementId::Name(format!("term-rename-{i}").into()))
+                        .text_size(px(9.0))
                         .text_color(rgb(theme::TEXT_DIM))
                         .cursor_pointer()
-                        .hover(|s| s.text_color(rgb(theme::ACCENT_RED)))
+                        .hover(|s| s.text_color(rgb(theme::ACCENT)))
                         .on_mouse_down(MouseButton::Left, {
-                            cx.listener(move |pane, _event, _window, cx| {
-                                pane.close_terminal(i);
-                                cx.notify();
+                            cx.listener(move |pane, _event, window, cx| {
+                                pane.start_rename(i, cx);
+                                if let Some(ref focus) = pane.rename_focus {
+                                    focus.focus(window);
+                                }
                             })
                         })
-                        .child("x"),
+                        .child("R"),
                 );
+
+                // Close button
+                if self.terminals.len() > 1 {
+                    tab = tab.child(
+                        div()
+                            .id(ElementId::Name(format!("term-close-{i}").into()))
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::TEXT_DIM))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(theme::ACCENT_RED)))
+                            .on_mouse_down(MouseButton::Left, {
+                                cx.listener(move |pane, _event, _window, cx| {
+                                    pane.close_terminal(i);
+                                    cx.notify();
+                                })
+                            })
+                            .child("x"),
+                    );
+                }
             }
 
             tabs_area = tabs_area.child(tab);
         }
         header = header.child(tabs_area);
 
-        // Action buttons (right side of header)
-        let actions = div()
+        // Action buttons
+        let mut actions = div()
             .flex()
             .items_center()
             .gap(px(2.0))
             .px(px(4.0))
             .flex_shrink_0()
-            // New terminal
             .child(
                 div()
                     .id("pane-new-term")
@@ -178,7 +277,6 @@ impl Render for Pane {
                     }))
                     .child("+"),
             )
-            // Split right
             .child(
                 div()
                     .id("pane-split-h")
@@ -194,7 +292,6 @@ impl Render for Pane {
                     }))
                     .child("||"),
             )
-            // Split down
             .child(
                 div()
                     .id("pane-split-v")
@@ -209,36 +306,35 @@ impl Render for Pane {
                         window.dispatch_action(Box::new(SplitDown), cx);
                     }))
                     .child("="),
-            )
-            // Zoom toggle (only shown when there are splits or already zoomed)
-            .children(if self.can_zoom || self.is_zoomed { Some({
-                let is_zoomed = self.is_zoomed;
-                let mut zoom_btn = div()
-                    .id("pane-zoom")
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(3.0))
-                    .text_size(px(11.0))
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_pane, _event, window, cx| {
-                        window.dispatch_action(Box::new(TogglePaneZoom), cx);
-                    }));
-                if is_zoomed {
-                    zoom_btn = zoom_btn
-                        .bg(rgb(theme::ACCENT))
-                        .text_color(rgb(theme::BG_PRIMARY))
-                        .hover(|s| s.bg(rgb(theme::ACCENT)));
-                } else {
-                    zoom_btn = zoom_btn
-                        .text_color(rgb(theme::TEXT_DIM))
-                        .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)));
-                }
-                zoom_btn.child(if is_zoomed { "[x]" } else { "[ ]" })
-            }) } else { None });
+            );
+
+        // Zoom toggle
+        if self.can_zoom || self.is_zoomed {
+            let is_zoomed = self.is_zoomed;
+            let mut zoom_btn = div()
+                .id("pane-zoom")
+                .px(px(6.0))
+                .py(px(2.0))
+                .rounded(px(3.0))
+                .text_size(px(11.0))
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, cx.listener(|_pane, _event, window, cx| {
+                    window.dispatch_action(Box::new(TogglePaneZoom), cx);
+                }));
+            if is_zoomed {
+                zoom_btn = zoom_btn
+                    .bg(rgb(theme::ACCENT))
+                    .text_color(rgb(theme::BG_PRIMARY));
+            } else {
+                zoom_btn = zoom_btn
+                    .text_color(rgb(theme::TEXT_DIM))
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::TEXT_PRIMARY)));
+            }
+            actions = actions.child(zoom_btn.child(if is_zoomed { "[x]" } else { "[ ]" }));
+        }
 
         header = header.child(actions);
 
-        // Zoom indicator bar
         if self.is_zoomed {
             header = header.child(
                 div()
@@ -256,8 +352,6 @@ impl Render for Pane {
         }
 
         container = container.child(header);
-
-        // Terminal content
         container = container.child(
             div().flex_1().overflow_hidden().child(self.active_terminal().clone()),
         );

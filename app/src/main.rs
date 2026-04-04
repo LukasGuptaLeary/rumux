@@ -12,6 +12,7 @@ mod session;
 mod sidebar;
 mod socket_server;
 mod terminal_surface;
+mod text_input;
 mod theme;
 mod workspace;
 
@@ -40,6 +41,7 @@ fn main() {
             KeyBinding::new("ctrl-b", ToggleSidebar, None),
             KeyBinding::new("ctrl-shift-enter", TogglePaneZoom, None),
             KeyBinding::new("ctrl-shift-u", JumpToUnread, None),
+            KeyBinding::new("ctrl-shift-c", DuplicateWorkspace, None),
             KeyBinding::new("ctrl-q", QuitApp, None),
         ]);
 

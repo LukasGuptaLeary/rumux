@@ -40,6 +40,17 @@ pub const ACCENT_YELLOW: u32 = 0xf9e2af;
 pub const BORDER: u32 = 0x313244;
 pub const DIVIDER: u32 = 0x45475a;
 
+pub const WORKSPACE_COLORS: [u32; 8] = [
+    0x89b4fa, // Blue
+    0xa6e3a1, // Green
+    0xf38ba8, // Red
+    0xf9e2af, // Yellow
+    0xf5c2e7, // Pink
+    0x94e2d5, // Teal
+    0xfab387, // Peach
+    0xcba6f7, // Mauve
+];
+
 pub fn hsla_from_rgb(hex: u32) -> Hsla {
     let r = ((hex >> 16) & 0xff) as f32 / 255.0;
     let g = ((hex >> 8) & 0xff) as f32 / 255.0;

@@ -25,6 +25,7 @@ actions!(
         ToggleSidebar,
         TogglePaneZoom,
         JumpToUnread,
+        DuplicateWorkspace,
         QuitApp,
     ]
 );
@@ -115,6 +116,10 @@ impl Render for RootView {
                 let ws = root.app_state.read(cx).active_workspace().clone();
                 let focused = ws.read(cx).focused_pane.clone();
                 focused.update(cx, |pane, _cx| pane.prev_terminal());
+            }))
+            .on_action(cx.listener(|root, _: &DuplicateWorkspace, _window, cx| {
+                root.app_state
+                    .update(cx, |state, cx| state.duplicate_workspace(cx));
             }))
             // Quit
             .on_action(cx.listener(|root, _: &QuitApp, _window, cx| {

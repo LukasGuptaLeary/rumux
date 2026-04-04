@@ -63,6 +63,11 @@ impl CommandPalette {
                     action: Box::new(PrevWorkspace),
                 },
                 PaletteCommand {
+                    label: "Duplicate Workspace",
+                    shortcut: "Ctrl+Shift+C",
+                    action: Box::new(DuplicateWorkspace),
+                },
+                PaletteCommand {
                     label: "Toggle Sidebar",
                     shortcut: "Ctrl+B",
                     action: Box::new(ToggleSidebar),
