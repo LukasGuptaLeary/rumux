@@ -28,6 +28,7 @@ fn main() {
 
     app.run(move |cx| {
         gpui_component::init(cx);
+        gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
 
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-n", NewWorkspace, None),
