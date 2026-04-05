@@ -133,62 +133,55 @@ rumux is backward compatible with cmux:
 
 ## Desktop App
 
-rumux includes a cross-platform desktop terminal application built with Tauri v2, xterm.js, and React. It replicates the [cmux desktop app](https://cmux.com) with support for macOS, Linux, and Windows.
+rumux includes a pure-Rust desktop application built on GPUI, following the same architectural direction as Zed rather than a webview stack.
+
+### Current Architecture
+
+- **Rendering:** GPUI + wgpu. No Tauri, React, xterm.js, or browser runtime.
+- **Workspace shell:** `AppState -> Workspace -> DockArea -> TerminalPanel -> TerminalView`
+- **Docking model:** `gpui-component` dock/tree primitives drive tabbed terminals, pane splits, and zoom state.
+- **Terminal runtime:** `portable-pty` + `alacritty_terminal` + `gpui-terminal`
+- **Persistence:** workspaces now restore their dock layout and terminal launch directories across restarts.
+- **IPC:** Unix domain sockets on Unix by default, loopback TCP on non-Unix. Override with `RUMUX_SOCKET_PATH` or `RUMUX_SOCKET_ADDR`.
 
 ### Features
 
-- Multiple workspaces with a vertical tab sidebar
-- Split panes (horizontal and vertical) with drag-to-resize dividers
-- Multiple terminal surfaces per pane (tabbed)
-- xterm.js terminal with WebGL rendering, 256-color support, Unicode
-- Embedded browser surfaces with URL bar and navigation
-- Notification system (OSC 777/99/9 escape sequences, OS notifications)
-- Unix socket API server (`/tmp/rumux.sock`) for programmatic control
-- Command palette (Cmd+Shift+P) with fuzzy search
-- Session save/restore (layout, directories, browser URLs)
-- Ghostty-compatible configuration
-- Custom commands via `rumux.json`/`cmux.json`
+- Multiple workspaces with a vertical sidebar
+- Docked terminal tabs and split panes
+- Session save and restore for workspace layout
+- Command palette and notification panel overlays
+- Ghostty-compatible terminal font configuration
+- Local RPC endpoint for automation and integration
 
 ### Building the Desktop App
 
-Prerequisites: Rust, Node.js, pnpm, and platform-specific dependencies.
+Prerequisites: Rust plus the native libraries required by GPUI/wgpu on your platform.
 
-**Linux:**
 ```bash
-sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libglib2.0-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+# Debug
+cargo run -p rumux-app
+
+# Release
+cargo build -p rumux-app --release
 ```
 
-**Build:**
-```bash
-cd app/src && pnpm install
-cargo tauri build
-```
-
-The built binary is at `target/release/rumux-app`.
-
-**Development:**
-```bash
-cargo tauri dev
-```
+The binary is written to `target/release/rumux-app`.
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| Cmd+N | New workspace |
-| Cmd+Shift+W | Close workspace |
-| Cmd+Shift+R | Rename workspace |
-| Cmd+T | New terminal surface |
-| Cmd+W | Close surface |
-| Cmd+D | Split right |
-| Cmd+Shift+D | Split down |
-| Cmd+Shift+P | Command palette |
-| Cmd+Shift+I | Notification panel |
-| Cmd+F | Find in terminal |
-| Cmd+K | Clear terminal |
-| Cmd+, | Settings |
-
-Use Ctrl instead of Cmd on Linux/Windows.
+| Ctrl/Cmd+Shift+N | New workspace |
+| Ctrl/Cmd+Shift+W | Close workspace |
+| Ctrl/Cmd+Shift+T or Cmd+T | New terminal |
+| Ctrl/Cmd+Shift+X or Cmd+W | Close terminal |
+| Ctrl+Shift+D or Cmd+D | Split right |
+| Ctrl+Alt+D or Cmd+Shift+D | Split down |
+| Ctrl/Cmd+Shift+P | Command palette |
+| Ctrl/Cmd+Shift+I | Notification panel |
+| Ctrl/Cmd+F | Find in terminal |
+| Ctrl/Cmd+B | Toggle sidebar |
+| Ctrl/Cmd+Q | Quit |
 
 ## License
 

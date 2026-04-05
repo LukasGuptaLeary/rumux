@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use console::style;
 
-use rumux_core::config::find_repo_root;
 use crate::shell::check_claude_cli;
+use rumux_core::config::find_repo_root;
 
 pub fn run(replace: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
@@ -14,10 +14,7 @@ pub fn run(replace: bool) -> Result<()> {
     // Check for legacy .cmux/setup
     let cmux_setup = repo_root.join(".cmux").join("setup");
     if cmux_setup.exists() {
-        eprintln!(
-            "{}",
-            style("Note: Found legacy .cmux/setup hook.").yellow()
-        );
+        eprintln!("{}", style("Note: Found legacy .cmux/setup hook.").yellow());
     }
 
     if setup_path.exists() && !replace {

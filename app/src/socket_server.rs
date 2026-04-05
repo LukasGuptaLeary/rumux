@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
-use futures_lite::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use async_net::TcpListener;
+use futures_lite::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use rumux_core::runtime::{IpcEndpoint, ipc_endpoint};
 use serde::{Deserialize, Serialize};
+
+#[cfg(unix)]
 use smol::net::unix::UnixListener;
-use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct RpcRequest {
@@ -42,49 +45,70 @@ impl RpcResponse {
     }
 }
 
-pub fn socket_path() -> PathBuf {
-    std::env::var("RUMUX_SOCKET_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp/rumux.sock"))
+pub async fn start_socket_server() -> Result<()> {
+    match ipc_endpoint() {
+        #[cfg(unix)]
+        IpcEndpoint::Unix(path) => start_unix_socket_server(path).await,
+        IpcEndpoint::Tcp(addr) => start_tcp_socket_server(addr).await,
+    }
 }
 
-pub async fn start_socket_server() -> Result<()> {
-    let path = socket_path();
-
+#[cfg(unix)]
+async fn start_unix_socket_server(path: std::path::PathBuf) -> Result<()> {
     if path.exists() {
         std::fs::remove_file(&path).ok();
     }
 
-    let listener = UnixListener::bind(&path).context("Failed to bind Unix socket")?;
+    let listener = UnixListener::bind(&path)
+        .with_context(|| format!("Failed to bind Unix socket at {}", path.display()))?;
 
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                smol::spawn(async move {
-                    let (reader, mut writer) = smol::io::split(stream);
-                    let mut buf_reader = BufReader::new(reader);
-                    let mut line = String::new();
-
-                    if buf_reader.read_line(&mut line).await.is_ok() && !line.is_empty() {
-                        let response = match serde_json::from_str::<RpcRequest>(&line) {
-                            Ok(req) => handle_request(req),
-                            Err(e) => {
-                                RpcResponse::error(String::new(), format!("Invalid JSON: {e}"))
-                            }
-                        };
-
-                        if let Ok(json) = serde_json::to_string(&response) {
-                            let _ = writer.write_all(json.as_bytes()).await;
-                            let _ = writer.write_all(b"\n").await;
-                            let _ = writer.flush().await;
-                        }
-                    }
-                })
-                .detach();
+                smol::spawn(handle_stream(stream)).detach();
             }
-            Err(e) => {
-                eprintln!("Socket accept error: {e}");
+            Err(error) => {
+                eprintln!("Socket accept error: {error}");
             }
+        }
+    }
+}
+
+async fn start_tcp_socket_server(addr: std::net::SocketAddr) -> Result<()> {
+    let listener = TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("Failed to bind TCP socket at {addr}"))?;
+
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                smol::spawn(handle_stream(stream)).detach();
+            }
+            Err(error) => {
+                eprintln!("Socket accept error: {error}");
+            }
+        }
+    }
+}
+
+async fn handle_stream<S>(stream: S)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (reader, mut writer) = smol::io::split(stream);
+    let mut buf_reader = BufReader::new(reader);
+    let mut line = String::new();
+
+    if buf_reader.read_line(&mut line).await.is_ok() && !line.is_empty() {
+        let response = match serde_json::from_str::<RpcRequest>(&line) {
+            Ok(req) => handle_request(req),
+            Err(error) => RpcResponse::error(String::new(), format!("Invalid JSON: {error}")),
+        };
+
+        if let Ok(json) = serde_json::to_string(&response) {
+            let _ = writer.write_all(json.as_bytes()).await;
+            let _ = writer.write_all(b"\n").await;
+            let _ = writer.flush().await;
         }
     }
 }
@@ -121,7 +145,8 @@ fn handle_request(req: RpcRequest) -> RpcResponse {
                     "sidebar.clear_log",
                     "sidebar.state"
                 ],
-                "access_mode": "rumuxOnly"
+                "access_mode": "rumuxOnly",
+                "transport": format!("{:?}", ipc_endpoint())
             }),
         ),
 

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use git2::{BranchType, MergeAnalysis, Repository};
 use std::path::Path;
 
@@ -23,27 +23,31 @@ pub fn create_worktree(repo_root: &Path, branch_name: &str, worktree_path: &Path
         let reference = repo
             .find_reference(&branch_ref)
             .context("Failed to find branch reference")?;
-        let commit = reference.peel_to_commit().context("Failed to peel to commit")?;
+        let commit = reference
+            .peel_to_commit()
+            .context("Failed to peel to commit")?;
 
         repo.worktree(
             branch_name,
             worktree_path,
             Some(git2::WorktreeAddOptions::new().reference(Some(&reference))),
         )
-        .with_context(|| format!("Failed to create worktree for existing branch '{branch_name}'"))?;
+        .with_context(|| {
+            format!("Failed to create worktree for existing branch '{branch_name}'")
+        })?;
 
         // The worktree creates a detached HEAD, we need to set it to the branch
         let wt_repo = Repository::open(worktree_path)?;
         wt_repo.set_head(&branch_ref)?;
-        wt_repo.checkout_head(Some(
-            git2::build::CheckoutBuilder::new().force(),
-        ))?;
+        wt_repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
 
         let _ = commit; // used indirectly above
     } else {
         // Create new branch from HEAD
         let head = repo.head().context("Failed to get HEAD")?;
-        let head_commit = head.peel_to_commit().context("HEAD does not point to a commit")?;
+        let head_commit = head
+            .peel_to_commit()
+            .context("HEAD does not point to a commit")?;
 
         // Create the branch first
         repo.branch(branch_name, &head_commit, false)
@@ -62,9 +66,7 @@ pub fn create_worktree(repo_root: &Path, branch_name: &str, worktree_path: &Path
         // Set HEAD to the branch in the worktree
         let wt_repo = Repository::open(worktree_path)?;
         wt_repo.set_head(&branch_ref)?;
-        wt_repo.checkout_head(Some(
-            git2::build::CheckoutBuilder::new().force(),
-        ))?;
+        wt_repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
     }
 
     Ok(())
@@ -86,8 +88,8 @@ pub fn list_worktrees(repo_root: &Path) -> Result<Vec<WorktreeInfo>> {
     }
 
     let mut results = vec![];
-    let entries = std::fs::read_dir(&worktrees_dir)
-        .context("Failed to read .worktrees directory")?;
+    let entries =
+        std::fs::read_dir(&worktrees_dir).context("Failed to read .worktrees directory")?;
 
     for entry in entries {
         let entry = entry?;
@@ -295,8 +297,12 @@ pub fn merge_branch(repo_root: &Path, branch_name: &str, squash: bool) -> Result
 pub fn remove_worktree(repo_root: &Path, worktree_path: &Path, name: &str) -> Result<()> {
     // Remove the directory
     if worktree_path.exists() {
-        std::fs::remove_dir_all(worktree_path)
-            .with_context(|| format!("Failed to remove worktree directory: {}", worktree_path.display()))?;
+        std::fs::remove_dir_all(worktree_path).with_context(|| {
+            format!(
+                "Failed to remove worktree directory: {}",
+                worktree_path.display()
+            )
+        })?;
     }
 
     // Prune the worktree reference in git

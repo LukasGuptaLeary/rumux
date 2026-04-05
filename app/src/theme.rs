@@ -1,4 +1,3 @@
-use gpui::*;
 use gpui_terminal::ColorPalette;
 
 pub fn catppuccin_mocha() -> ColorPalette {

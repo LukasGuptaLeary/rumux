@@ -1,7 +1,8 @@
 use anyhow::Result;
 use gpui::*;
 use gpui_terminal::{TerminalConfig, TerminalView};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use rumux_core::runtime::default_shell;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -31,7 +32,7 @@ pub fn spawn_terminal_view_with_config(
         pixel_height: 0,
     })?;
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let shell = default_shell();
     let mut cmd = CommandBuilder::new(&shell);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
@@ -76,8 +77,8 @@ pub fn spawn_terminal_view_with_config(
     };
 
     let terminal = cx.new(|cx| {
-        let mut view = TerminalView::new(writer, reader, config, cx)
-            .with_resize_callback(resize_callback);
+        let mut view =
+            TerminalView::new(writer, reader, config, cx).with_resize_callback(resize_callback);
 
         if let Some(exit_cb) = on_exit {
             view = view.with_exit_callback(move |window, cx| exit_cb(window, cx));

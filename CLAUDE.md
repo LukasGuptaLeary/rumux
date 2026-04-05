@@ -44,15 +44,16 @@ rumux/
 │   ├── Cargo.toml
 │   └── src/
 │       ├── main.rs               # App entry, window creation, keybindings
-│       ├── root_view.rs          # Top-level view: sidebar + workspace + overlays
-│       ├── app_state.rs          # Global state: workspaces, active index
-│       ├── workspace.rs          # Workspace entity: split tree layout, pane management
-│       ├── pane.rs               # Pane entity: terminal tabs, tab bar, actions
-│       ├── sidebar.rs            # Vertical workspace sidebar with tabs
+│       ├── v2/                   # Canonical desktop shell
+│       │   ├── app_state.rs      # Global state: workspaces, persistence wiring
+│       │   ├── root_view.rs      # Top-level view: sidebar + active workspace + overlays
+│       │   ├── sidebar.rs        # Vertical workspace sidebar with rename/select controls
+│       │   ├── terminal_panel.rs # Dock-compatible terminal panel
+│       │   └── workspace.rs      # Workspace entity backed by DockArea
 │       ├── terminal_surface.rs   # PTY spawning + TerminalView creation
 │       ├── command_palette.rs    # Fuzzy command palette overlay (Ctrl+Shift+P)
 │       ├── notifications.rs      # OSC 777/99/9 parser
-│       ├── socket_server.rs      # Unix socket JSON-RPC server (/tmp/rumux.sock)
+│       ├── socket_server.rs      # Local RPC transport (Unix socket or loopback TCP)
 │       ├── session.rs            # Session save/restore
 │       └── theme.rs              # Catppuccin Mocha color palette + UI colors
 ```
@@ -67,9 +68,10 @@ Pure Rust, GPU-accelerated via GPUI framework (from Zed).
 
 - **Rendering**: GPUI + wgpu (Vulkan on Linux, Metal on macOS). No webview, no JavaScript.
 - **Terminal**: `gpui-terminal` crate wraps `alacritty_terminal` for VTE parsing + GPU cell rendering. `portable-pty` for PTY I/O.
-- **State model**: GPUI entities — AppState → Workspace (split tree) → Pane (terminal tabs) → TerminalView
-- **Layout**: Recursive SplitTree (horizontal/vertical) with flex-based rendering
-- **Socket API**: smol-based Unix socket at `/tmp/rumux.sock`, JSON-RPC protocol
+- **State model**: GPUI entities — AppState → Workspace → DockArea → TerminalPanel → TerminalView
+- **Layout**: Dock/tree model from `gpui-component`, mirroring the architectural style used by Zed
+- **Session restore**: Dock layout and terminal launch directories are serialized per workspace
+- **Socket API**: local RPC over Unix sockets on Unix and loopback TCP on non-Unix
 - **Notifications**: OSC 777/99/9 escape sequences parsed from PTY output
 
 ### Vendored gpui-terminal

@@ -30,17 +30,13 @@ pub fn run_setup_hook(worktree_path: &Path) -> Result<bool> {
     if is_legacy {
         eprintln!(
             "{}",
-            style("Using legacy .cmux/setup hook. Consider renaming to .rumux/setup.")
-                .yellow()
+            style("Using legacy .cmux/setup hook. Consider renaming to .rumux/setup.").yellow()
         );
     }
 
     let spinner = console::Term::stderr();
     let _ = spinner;
-    eprintln!(
-        "{}",
-        style("Running setup hook...").dim()
-    );
+    eprintln!("{}", style("Running setup hook...").dim());
 
     let status = Command::new(&hook_path)
         .current_dir(worktree_path)

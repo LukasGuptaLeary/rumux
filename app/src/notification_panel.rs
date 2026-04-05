@@ -1,7 +1,10 @@
 use gpui::*;
 
+use gpui_component::button::{Button, ButtonVariants};
+
 use crate::app_state::AppState;
 use crate::notifications::Notification;
+use crate::root_view::ToggleNotificationPanel;
 use crate::theme;
 
 pub struct NotificationPanel {
@@ -21,8 +24,7 @@ impl NotificationPanel {
 impl Render for NotificationPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.app_state.read(cx);
-        let notifications: Vec<Notification> =
-            state.notifications.iter().rev().cloned().collect();
+        let notifications: Vec<Notification> = state.notifications.iter().rev().cloned().collect();
         let count = notifications.len();
 
         let mut list = div().flex_1().overflow_hidden();
@@ -103,10 +105,7 @@ impl Render for NotificationPanel {
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|_panel, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
-                    window.dispatch_action(
-                        Box::new(crate::root_view::ToggleNotificationPanel),
-                        cx,
-                    );
+                    window.dispatch_action(Box::new(ToggleNotificationPanel), cx);
                 }
             }))
             // Header
@@ -125,22 +124,19 @@ impl Render for NotificationPanel {
                             .child(format!("Notifications ({count})")),
                     )
                     .child(
-                        div()
-                            .id("clear-notifs")
-                            .text_size(px(12.0))
-                            .text_color(rgb(theme::TEXT_DIM))
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(rgb(theme::TEXT_PRIMARY)))
-                            .on_mouse_down(MouseButton::Left, {
+                        Button::new("clear-notifs")
+                            .ghost()
+                            .compact()
+                            .label("Clear all")
+                            .on_click({
                                 let app_state = self.app_state.clone();
                                 cx.listener(move |_panel, _event, _window, cx| {
-                                    app_state.update(cx, |state, cx| {
+                                    app_state.update(cx, |state: &mut AppState, cx| {
                                         state.notifications.clear();
                                         cx.notify();
                                     });
                                 })
-                            })
-                            .child("Clear all"),
+                            }),
                     ),
             )
             // List

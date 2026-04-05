@@ -1,10 +1,10 @@
 use anyhow::Result;
 use console::style;
 
-use rumux_core::config::{find_repo_root, sanitize_branch_name, worktree_path};
-use rumux_core::git_ops::create_worktree;
 use crate::hook::run_setup_hook;
 use crate::shell::launch_claude;
+use rumux_core::config::{find_repo_root, sanitize_branch_name, worktree_path};
+use rumux_core::git_ops::create_worktree;
 
 pub fn run(branch: &str, prompt: Option<&str>) -> Result<()> {
     let cwd = std::env::current_dir()?;
@@ -18,10 +18,7 @@ pub fn run(branch: &str, prompt: Option<&str>) -> Result<()> {
     let wt_path = worktree_path(&repo_root, &sanitized);
 
     if wt_path.exists() {
-        eprintln!(
-            "{}",
-            style("Worktree already exists, reusing...").yellow()
-        );
+        eprintln!("{}", style("Worktree already exists, reusing...").yellow());
     } else {
         eprintln!(
             "{}",

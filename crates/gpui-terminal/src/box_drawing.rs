@@ -26,7 +26,7 @@
 //! }
 //! ```
 
-use gpui::{point, Bounds, Hsla, PathBuilder, Pixels, Point, Window, px};
+use gpui::{Bounds, Hsla, PathBuilder, Pixels, Point, Window, point, px};
 
 /// Calculate line thicknesses rounded to integer pixels to avoid aliasing.
 fn calculate_thickness(cell_width: Pixels) -> (Pixels, Pixels) {
@@ -70,7 +70,12 @@ impl BoxSegments {
         left: Option<LineWeight>,
         right: Option<LineWeight>,
     ) -> Self {
-        Self { top, bottom, left, right }
+        Self {
+            top,
+            bottom,
+            left,
+            right,
+        }
     }
 
     const fn horizontal(weight: LineWeight) -> Self {
@@ -149,12 +154,16 @@ pub fn get_vertical_weight(ch: char) -> Option<LineWeight> {
 
 /// Returns true if the character extends to the left edge.
 pub fn extends_left(ch: char) -> bool {
-    get_box_segments(ch).map(|s| s.left.is_some()).unwrap_or(false)
+    get_box_segments(ch)
+        .map(|s| s.left.is_some())
+        .unwrap_or(false)
 }
 
 /// Returns true if the character extends to the right edge.
 pub fn extends_right(ch: char) -> bool {
-    get_box_segments(ch).map(|s| s.right.is_some()).unwrap_or(false)
+    get_box_segments(ch)
+        .map(|s| s.right.is_some())
+        .unwrap_or(false)
 }
 
 /// Returns the box segments for a Unicode box-drawing character.
@@ -237,19 +246,19 @@ pub fn get_box_segments(ch: char) -> Option<BoxSegments> {
         0x2520 => BoxSegments::new(Some(Heavy), Some(Heavy), None, Some(Light)), // ┠
         0x2521 => BoxSegments::new(Some(Heavy), Some(Light), None, Some(Heavy)), // ┡
         0x2522 => BoxSegments::new(Some(Light), Some(Heavy), None, Some(Heavy)), // ┢
-        0x2523 => BoxSegments::t_left(Heavy), // ┣
+        0x2523 => BoxSegments::t_left(Heavy),                                    // ┣
         0x2528 => BoxSegments::new(Some(Heavy), Some(Heavy), Some(Light), None), // ┨
         0x2529 => BoxSegments::new(Some(Heavy), Some(Light), Some(Heavy), None), // ┩
         0x252A => BoxSegments::new(Some(Light), Some(Heavy), Some(Heavy), None), // ┪
-        0x252B => BoxSegments::t_right(Heavy), // ┫
+        0x252B => BoxSegments::t_right(Heavy),                                   // ┫
         0x2530 => BoxSegments::new(None, Some(Heavy), Some(Heavy), Some(Light)), // ┰
         0x2531 => BoxSegments::new(None, Some(Heavy), Some(Light), Some(Heavy)), // ┱
         0x2532 => BoxSegments::new(None, Some(Light), Some(Heavy), Some(Heavy)), // ┲
-        0x2533 => BoxSegments::t_top(Heavy), // ┳
+        0x2533 => BoxSegments::t_top(Heavy),                                     // ┳
         0x2538 => BoxSegments::new(Some(Heavy), None, Some(Heavy), Some(Light)), // ┸
         0x2539 => BoxSegments::new(Some(Heavy), None, Some(Light), Some(Heavy)), // ┹
         0x253A => BoxSegments::new(Some(Light), None, Some(Heavy), Some(Heavy)), // ┺
-        0x253B => BoxSegments::t_bottom(Heavy), // ┻
+        0x253B => BoxSegments::t_bottom(Heavy),                                  // ┻
 
         // Light cross
         0x253C => BoxSegments::cross(Light), // ┼
@@ -450,7 +459,11 @@ pub fn draw_vertical_components(
     if let Some(weight) = v_weight {
         let thickness = get_thickness(weight, light_thickness, heavy_thickness);
         let start_y = if segments.top.is_some() { top_edge } else { cy };
-        let end_y = if segments.bottom.is_some() { bottom_edge } else { cy };
+        let end_y = if segments.bottom.is_some() {
+            bottom_edge
+        } else {
+            cy
+        };
 
         draw_continuous_line(
             point(cx, start_y),
@@ -549,8 +562,16 @@ pub fn draw_box_character(
     if let Some(weight) = h_weight {
         let thickness = get_thickness(weight, light_thickness, heavy_thickness);
         // Extend past cell boundaries to overlap with adjacent cells
-        let start_x = if segments.left.is_some() { left_edge - overlap } else { cx };
-        let end_x = if segments.right.is_some() { right_edge + overlap } else { cx };
+        let start_x = if segments.left.is_some() {
+            left_edge - overlap
+        } else {
+            cx
+        };
+        let end_x = if segments.right.is_some() {
+            right_edge + overlap
+        } else {
+            cx
+        };
 
         draw_continuous_line(
             point(start_x, cy),
@@ -593,8 +614,16 @@ pub fn draw_box_character(
     if let Some(weight) = v_weight {
         let thickness = get_thickness(weight, light_thickness, heavy_thickness);
         // Extend past cell boundaries to overlap with adjacent cells
-        let start_y = if segments.top.is_some() { top_edge - overlap } else { cy };
-        let end_y = if segments.bottom.is_some() { bottom_edge + overlap } else { cy };
+        let start_y = if segments.top.is_some() {
+            top_edge - overlap
+        } else {
+            cy
+        };
+        let end_y = if segments.bottom.is_some() {
+            bottom_edge + overlap
+        } else {
+            cy
+        };
 
         draw_continuous_line(
             point(cx, start_y),

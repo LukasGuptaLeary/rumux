@@ -1,4 +1,5 @@
 use anyhow::Result;
+use rumux_core::runtime::rumux_config_dir;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -58,24 +59,22 @@ impl RumuxConfig {
 }
 
 fn rumux_config_path() -> Option<PathBuf> {
-    let config_dir = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg)
-    } else {
-        let home = std::env::var("HOME").ok()?;
-        PathBuf::from(home).join(".config")
-    };
-    Some(config_dir.join("rumux").join("config.toml"))
+    Some(rumux_config_dir().join("config.toml"))
 }
 
 fn ghostty_config_paths() -> Vec<PathBuf> {
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => return vec![],
-    };
-    vec![
-        PathBuf::from(&home).join(".config/ghostty/config"),
-        PathBuf::from(&home).join("Library/Application Support/com.mitchellh.ghostty/config"),
-    ]
+    let mut paths = Vec::new();
+
+    if let Some(config_dir) = dirs::config_dir() {
+        paths.push(config_dir.join("ghostty").join("config"));
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Some(home_dir) = dirs::home_dir() {
+        paths.push(home_dir.join("Library/Application Support/com.mitchellh.ghostty/config"));
+    }
+
+    paths
 }
 
 fn load_toml(path: &PathBuf) -> Result<RumuxConfig> {

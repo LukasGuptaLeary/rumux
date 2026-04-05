@@ -1,10 +1,10 @@
 use anyhow::Result;
 use console::style;
 
+use crate::shell::launch_claude_continue;
 use rumux_core::config::{find_repo_root, sanitize_branch_name, worktree_path};
 use rumux_core::errors::RumuxError;
 use rumux_core::git_ops::list_worktrees;
-use crate::shell::launch_claude_continue;
 
 pub fn run(branch: &str) -> Result<()> {
     let cwd = std::env::current_dir()?;
@@ -13,7 +13,10 @@ pub fn run(branch: &str) -> Result<()> {
     let wt_path = worktree_path(&repo_root, &sanitized);
 
     if !wt_path.exists() {
-        eprintln!("{}", style(format!("Worktree '{sanitized}' not found.")).red());
+        eprintln!(
+            "{}",
+            style(format!("Worktree '{sanitized}' not found.")).red()
+        );
 
         let worktrees = list_worktrees(&repo_root)?;
         if !worktrees.is_empty() {

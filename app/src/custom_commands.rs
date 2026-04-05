@@ -1,4 +1,5 @@
 use anyhow::Result;
+use rumux_core::runtime::rumux_config_dir;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -41,13 +42,7 @@ pub fn load_custom_commands() -> Vec<CustomCommandDef> {
 }
 
 fn config_commands_dir() -> Option<PathBuf> {
-    let config_dir = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg)
-    } else {
-        let home = std::env::var("HOME").ok()?;
-        PathBuf::from(home).join(".config")
-    };
-    Some(config_dir.join("rumux"))
+    Some(rumux_config_dir())
 }
 
 fn load_from_file(path: &PathBuf) -> Result<Vec<CustomCommandDef>> {
@@ -84,7 +79,8 @@ mod tests {
 
     #[test]
     fn test_parse_commands_array() {
-        let json = r#"[{"name": "Build", "command": "cargo build\n", "keywords": ["rust", "compile"]}]"#;
+        let json =
+            r#"[{"name": "Build", "command": "cargo build\n", "keywords": ["rust", "compile"]}]"#;
         let cmds: Vec<CustomCommandDef> = serde_json::from_str(json).unwrap();
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].keywords, vec!["rust", "compile"]);

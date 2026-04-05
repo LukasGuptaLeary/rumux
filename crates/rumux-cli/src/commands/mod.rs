@@ -5,7 +5,7 @@ pub mod ls;
 pub mod merge;
 pub mod new;
 pub mod rm;
+pub mod socket_client;
 pub mod start;
 pub mod update;
-pub mod socket_client;
 pub mod version;

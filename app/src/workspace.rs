@@ -1,239 +1,314 @@
-use gpui::*;
+use std::sync::Arc;
 
-use crate::pane::Pane;
+use gpui::*;
+use gpui_component::Placement;
+use gpui_component::dock::{
+    DockArea, DockAreaState, DockEvent, DockItem, DockPlacement, PanelInfo, PanelState, PanelStyle,
+    PanelView, TabPanel,
+};
+use uuid::Uuid;
+
+use crate::session::WorkspaceSession;
 use crate::terminal_surface::spawn_terminal_view;
+use crate::terminal_panel::TerminalPanel;
 use crate::theme;
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum SplitDirection {
-    Horizontal,
-    Vertical,
-}
-
-pub enum LayoutNode {
-    Leaf(Entity<Pane>),
-    Split {
-        direction: SplitDirection,
-        ratio: f32,
-        first: Box<LayoutNode>,
-        second: Box<LayoutNode>,
-    },
+pub enum WorkspaceEvent {
+    PersistRequested,
 }
 
 pub struct Workspace {
     pub name: String,
-    pub layout: LayoutNode,
-    pub focused_pane: Entity<Pane>,
+    pub dock_area: Entity<DockArea>,
     pub unread_count: usize,
-    pub zoomed: bool,
     pub color: Option<u32>,
     pub git_branch: Option<String>,
     pub cwd: Option<String>,
+    next_terminal_index: usize,
+    _dock_subscription: Subscription,
 }
 
 impl Workspace {
-    pub fn new(name: String, pane: Entity<Pane>) -> Self {
-        let focused = pane.clone();
-        Self {
-            name,
-            layout: LayoutNode::Leaf(pane),
-            focused_pane: focused,
-            unread_count: 0,
-            zoomed: false,
-            color: None,
-            git_branch: None,
-            cwd: None,
+    pub fn new(
+        name: String,
+        cwd: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::build(name, cwd, None, Some(1), window, cx)
+    }
+
+    pub fn from_session(
+        session: WorkspaceSession,
+        fallback_cwd: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let cwd = if session.cwd.trim().is_empty() {
+            fallback_cwd
+        } else {
+            Some(session.cwd.clone())
+        };
+        let next_terminal_index = session
+            .next_terminal_index
+            .unwrap_or_else(|| next_terminal_index_from_state(session.dock_area.as_ref()));
+
+        Self::build(
+            session.name,
+            cwd,
+            session.dock_area,
+            Some(next_terminal_index),
+            window,
+            cx,
+        )
+    }
+
+    pub fn to_session(&self, cx: &App) -> WorkspaceSession {
+        WorkspaceSession {
+            name: self.name.clone(),
+            cwd: self.cwd.clone().unwrap_or_default(),
+            dock_area: Some(self.dock_area.read(cx).dump(cx)),
+            next_terminal_index: Some(self.current_next_terminal_index(cx)),
         }
     }
 
-    pub fn split(&mut self, direction: SplitDirection, cx: &mut App) {
-        let focused = self.focused_pane.clone();
-        let cwd_path = self.cwd.as_deref().map(std::path::Path::new);
-        if let Ok(term) = spawn_terminal_view(cx, cwd_path, None) {
-            let new_pane = cx.new(|cx| Pane::new(term, cx));
-            self.layout = replace_pane_with_split(
-                std::mem::replace(&mut self.layout, LayoutNode::Leaf(focused.clone())),
-                &focused,
-                direction,
-                new_pane.clone(),
-            );
-            self.focused_pane = new_pane;
-        }
-    }
-
-    pub fn has_splits(&self) -> bool {
-        matches!(self.layout, LayoutNode::Split { .. })
-    }
-
-    pub fn toggle_zoom(&mut self, cx: &mut App) {
-        // Only allow zoom when there are splits
-        if !self.zoomed && !self.has_splits() {
-            return;
-        }
-
-        self.zoomed = !self.zoomed;
-        self.focused_pane.update(cx, |pane, _cx| {
-            pane.is_zoomed = self.zoomed;
+    fn build(
+        name: String,
+        cwd: Option<String>,
+        dock_state: Option<DockAreaState>,
+        next_terminal_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let dock_area = cx.new(|cx| {
+            DockArea::new(format!("workspace-{}", Uuid::new_v4()), None, window, cx)
+                .panel_style(PanelStyle::TabBar)
         });
-        if !self.zoomed {
-            for pane in self.panes() {
-                pane.update(cx, |pane, _cx| {
-                    pane.is_zoomed = false;
-                });
+        let dock_subscription = cx.subscribe(&dock_area, |workspace, _, event: &DockEvent, cx| {
+            if matches!(event, DockEvent::LayoutChanged) {
+                workspace.next_terminal_index = workspace.current_next_terminal_index(cx);
+                cx.emit(WorkspaceEvent::PersistRequested);
             }
+        });
+
+        let initial_cwd = cwd.as_deref().map(std::path::Path::new);
+        let mut loaded_state = false;
+
+        if let Some(state) = dock_state {
+            loaded_state = dock_area
+                .update(cx, |area, cx| area.load(state, window, cx))
+                .is_ok();
         }
-    }
 
-    pub fn panes(&self) -> Vec<Entity<Pane>> {
-        let mut result = Vec::new();
-        collect_panes(&self.layout, &mut result);
-        result
-    }
-
-    fn render_layout_node(&self, node: &LayoutNode, cx: &mut Context<Self>) -> Div {
-        match node {
-            LayoutNode::Leaf(pane) => {
-                let is_focused = pane == &self.focused_pane;
-                let pane_clone = pane.clone();
-                let mut d = div()
-                    .size_full()
-                    .on_mouse_down(MouseButton::Left, {
-                        cx.listener(move |ws, _event, _window, cx| {
-                            // Set this pane as focused and tell it to grab terminal focus
-                            pane_clone.update(cx, |pane, _cx| {
-                                pane.needs_focus = true;
-                            });
-                            ws.focused_pane = pane_clone.clone();
-                            cx.notify();
-                        })
-                    });
-                if is_focused {
-                    d = d.border_t_2().border_color(rgb(theme::ACCENT));
-                } else {
-                    d = d.border_t_2().border_color(gpui::transparent_black());
-                }
-                d.child(pane.clone())
-            }
-            LayoutNode::Split {
-                direction,
-                first,
-                second,
-                ..
-            } => {
-                let is_horizontal = *direction == SplitDirection::Horizontal;
-                let first_child = self.render_layout_node(first, cx);
-                let second_child = self.render_layout_node(second, cx);
-
-                let mut divider = div()
-                    .bg(rgb(theme::DIVIDER))
-                    .flex_shrink_0();
-                if is_horizontal {
-                    divider = divider
-                        .w(px(4.0))
-                        .h_full()
-                        .cursor(CursorStyle::ResizeLeftRight);
-                } else {
-                    divider = divider
-                        .h(px(4.0))
-                        .w_full()
-                        .cursor(CursorStyle::ResizeUpDown);
-                }
-
-                let mut container = div().size_full().flex();
-                if is_horizontal {
-                    container = container.flex_row();
-                } else {
-                    container = container.flex_col();
-                }
-
-                container
-                    .child(first_child.flex_1().overflow_hidden())
-                    .child(divider)
-                    .child(second_child.flex_1().overflow_hidden())
-            }
-        }
-    }
-}
-
-fn collect_panes(node: &LayoutNode, out: &mut Vec<Entity<Pane>>) {
-    match node {
-        LayoutNode::Leaf(pane) => out.push(pane.clone()),
-        LayoutNode::Split { first, second, .. } => {
-            collect_panes(first, out);
-            collect_panes(second, out);
-        }
-    }
-}
-
-fn replace_pane_with_split(
-    node: LayoutNode,
-    target: &Entity<Pane>,
-    direction: SplitDirection,
-    new_pane: Entity<Pane>,
-) -> LayoutNode {
-    match node {
-        LayoutNode::Leaf(ref pane) if pane == target => LayoutNode::Split {
-            direction,
-            ratio: 0.5,
-            first: Box::new(node),
-            second: Box::new(LayoutNode::Leaf(new_pane)),
-        },
-        LayoutNode::Split {
-            direction: d,
-            ratio,
-            first,
-            second,
-        } => LayoutNode::Split {
-            direction: d,
-            ratio,
-            first: Box::new(replace_pane_with_split(*first, target, direction, new_pane.clone())),
-            second: Box::new(replace_pane_with_split(*second, target, direction, new_pane)),
-        },
-        other => other,
-    }
-}
-
-pub fn remove_pane_from_layout(node: LayoutNode, target: &Entity<Pane>) -> Option<LayoutNode> {
-    match node {
-        LayoutNode::Leaf(ref pane) if pane == target => None,
-        LayoutNode::Leaf(_) => Some(node),
-        LayoutNode::Split {
-            first, second, ..
-        } => {
-            let first_result = remove_pane_from_layout(*first, target);
-            let second_result = remove_pane_from_layout(*second, target);
-            match (first_result, second_result) {
-                (None, None) => None,
-                (Some(node), None) | (None, Some(node)) => Some(node),
-                (Some(f), Some(s)) => Some(LayoutNode::Split {
-                    direction: SplitDirection::Horizontal,
-                    ratio: 0.5,
-                    first: Box::new(f),
-                    second: Box::new(s),
-                }),
-            }
-        }
-    }
-}
-
-impl Render for Workspace {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Update can_zoom on all panes based on whether splits exist
-        let has_splits = self.has_splits();
-        for pane in self.panes() {
-            pane.update(cx, |pane, _cx| {
-                pane.can_zoom = has_splits;
+        if !loaded_state {
+            let center = Self::default_center(initial_cwd, &dock_area, window, cx);
+            dock_area.update(cx, |area, cx| {
+                area.set_center(center, window, cx);
             });
         }
 
-        let content = if self.zoomed {
-            div().size_full().child(self.focused_pane.clone())
+        Self {
+            name,
+            dock_area,
+            unread_count: 0,
+            color: None,
+            git_branch: None,
+            cwd,
+            next_terminal_index: next_terminal_index.unwrap_or(1).max(1),
+            _dock_subscription: dock_subscription,
+        }
+    }
+
+    fn default_center(
+        cwd: Option<&std::path::Path>,
+        dock_area: &Entity<DockArea>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DockItem {
+        let panel = Self::create_terminal_panel(cwd, 0, cx);
+        DockItem::h_split(
+            vec![DockItem::tab(
+                panel,
+                &dock_area.downgrade(),
+                window,
+                &mut **cx,
+            )],
+            &dock_area.downgrade(),
+            window,
+            &mut **cx,
+        )
+    }
+
+    fn create_terminal_panel(
+        cwd: Option<&std::path::Path>,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalPanel> {
+        cx.new(|cx| {
+            TerminalPanel::from_cwd(cwd, index, cx).unwrap_or_else(|_| {
+                let term =
+                    spawn_terminal_view(&mut **cx, None, None).expect("failed to spawn terminal");
+                TerminalPanel::new(term, index, None, cx)
+            })
+        })
+    }
+
+    pub fn add_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cwd_path = self.cwd.as_deref().map(std::path::Path::new);
+        let index = self.current_next_terminal_index(cx);
+        self.next_terminal_index = index + 1;
+
+        let panel = Self::create_terminal_panel(cwd_path, index, cx);
+        let panel_view: Arc<dyn PanelView> = Arc::new(panel);
+
+        if let Some(target_tp) = self.target_tab_panel(Some(window), cx) {
+            target_tp.update(cx, |tp, cx| {
+                tp.add_panel(panel_view, window, cx);
+            });
         } else {
-            self.render_layout_node(&self.layout, cx)
+            self.dock_area.update(cx, |area, cx| {
+                area.add_panel(panel_view, DockPlacement::Center, None, window, cx);
+            });
+        }
+
+        cx.notify();
+    }
+
+    pub fn split(&mut self, placement: Placement, window: &mut Window, cx: &mut Context<Self>) {
+        let cwd_path = self.cwd.as_deref().map(std::path::Path::new);
+        let index = self.current_next_terminal_index(cx);
+        self.next_terminal_index = index + 1;
+
+        let panel = Self::create_terminal_panel(cwd_path, index, cx);
+        let panel_view: Arc<dyn PanelView> = Arc::new(panel);
+
+        if let Some(target_tp) = self.target_tab_panel(Some(window), cx) {
+            target_tp.update(cx, |tp, cx| {
+                tp.add_panel_at(panel_view, placement, None, window, cx);
+            });
+        } else {
+            self.dock_area.update(cx, |area, cx| {
+                area.add_panel(panel_view, DockPlacement::Center, None, window, cx);
+            });
+        }
+
+        cx.notify();
+    }
+
+    pub fn close_active_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(target_tp) = self.target_tab_panel(Some(window), cx) {
+            let active = target_tp.read(cx).active_panel(cx);
+            if let Some(panel) = active {
+                target_tp.update(cx, |tp, cx| {
+                    tp.remove_panel(panel, window, cx);
+                });
+            }
+        }
+
+        cx.notify();
+    }
+
+    pub fn next_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(target_tp) = self.target_tab_panel(Some(window), cx) {
+            target_tp.update(cx, |tp, cx| {
+                tp.next_tab(window, cx);
+            });
+        }
+    }
+
+    pub fn prev_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(target_tp) = self.target_tab_panel(Some(window), cx) {
+            target_tp.update(cx, |tp, cx| {
+                tp.prev_tab(window, cx);
+            });
+        }
+    }
+
+    pub fn toggle_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let is_zoomed = {
+            let dock = self.dock_area.read(cx);
+            dock.is_zoomed()
         };
+
+        if let Some(target_tp) = self.target_tab_panel(Some(window), cx) {
+            if is_zoomed {
+                self.dock_area.update(cx, |area, cx| {
+                    area.set_zoomed_out(window, cx);
+                });
+            } else {
+                self.dock_area.update(cx, |area, cx| {
+                    area.set_zoomed_in(target_tp, window, cx);
+                });
+            }
+        }
+
+        cx.notify();
+    }
+
+    pub fn focus_target(&self, window: &mut Window, cx: &mut App) {
+        if let Some(tab_panel) = self.target_tab_panel(Some(window), cx) {
+            tab_panel.read(cx).focus_handle(cx).focus(window);
+        }
+    }
+
+    pub fn write_to_target_terminal(&self, text: &str, cx: &mut App) {
+        if let Some(panel) = self.target_terminal_panel(cx) {
+            panel.update(cx, |panel, cx| {
+                panel.write_to_terminal(text.as_bytes(), &mut **cx);
+            });
+        }
+    }
+
+    fn target_tab_panel(&self, window: Option<&Window>, cx: &App) -> Option<Entity<TabPanel>> {
+        self.dock_area.read(cx).target_tab_panel(window, cx)
+    }
+
+    fn target_terminal_panel(&self, cx: &App) -> Option<Entity<TerminalPanel>> {
+        let tab_panel = self.target_tab_panel(None, cx)?;
+        let active_panel = tab_panel.read(cx).active_panel(cx)?;
+        Some(Entity::<TerminalPanel>::from(active_panel.as_ref()))
+    }
+
+    fn current_next_terminal_index(&self, cx: &App) -> usize {
+        next_terminal_index_from_state(Some(&self.dock_area.read(cx).dump(cx)))
+    }
+}
+
+impl EventEmitter<WorkspaceEvent> for Workspace {}
+
+impl Render for Workspace {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .bg(rgb(theme::BG_PRIMARY))
-            .child(content)
+            .child(self.dock_area.clone())
     }
+}
+
+fn next_terminal_index_from_state(state: Option<&DockAreaState>) -> usize {
+    state
+        .and_then(|state| max_terminal_index(&state.center))
+        .map(|index| index + 1)
+        .unwrap_or(1)
+}
+
+fn max_terminal_index(state: &PanelState) -> Option<usize> {
+    let mut max_index = match &state.info {
+        PanelInfo::Panel(value) if state.panel_name == "TerminalPanel" => value
+            .get("index")
+            .and_then(|index| index.as_u64())
+            .map(|index| index as usize),
+        _ => None,
+    };
+
+    for child in &state.children {
+        if let Some(child_index) = max_terminal_index(child) {
+            max_index = Some(match max_index {
+                Some(current) => current.max(child_index),
+                None => child_index,
+            });
+        }
+    }
+
+    max_index
 }

@@ -2,7 +2,9 @@ use anyhow::Result;
 use console::style;
 use dialoguer::Confirm;
 
-use rumux_core::config::{detect_current_worktree, find_repo_root, sanitize_branch_name, worktree_path};
+use rumux_core::config::{
+    detect_current_worktree, find_repo_root, sanitize_branch_name, worktree_path,
+};
 use rumux_core::errors::RumuxError;
 use rumux_core::git_ops::{delete_branch, is_branch_merged, list_worktrees, remove_worktree};
 
@@ -18,8 +20,7 @@ pub fn run(branch: Option<&str>, all: bool, force: bool) -> Result<()> {
         Some(b) => sanitize_branch_name(b),
         None => {
             // Detect current worktree
-            detect_current_worktree(&cwd, &repo_root)
-                .ok_or(RumuxError::NotInWorktree)?
+            detect_current_worktree(&cwd, &repo_root).ok_or(RumuxError::NotInWorktree)?
         }
     };
 
@@ -61,7 +62,10 @@ fn remove_single(
     if merged || force {
         match delete_branch(repo_root, name) {
             Ok(()) => eprintln!("{}", style(format!("Deleted branch '{name}'.")).green()),
-            Err(e) => eprintln!("{}", style(format!("Note: Could not delete branch '{name}': {e}")).dim()),
+            Err(e) => eprintln!(
+                "{}",
+                style(format!("Note: Could not delete branch '{name}': {e}")).dim()
+            ),
         }
     } else {
         eprintln!(

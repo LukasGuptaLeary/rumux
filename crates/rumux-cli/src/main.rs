@@ -8,7 +8,11 @@ use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
 #[derive(Parser)]
-#[command(name = "rumux", version, about = "Git worktree lifecycle manager for parallel Claude Code sessions")]
+#[command(
+    name = "rumux",
+    version,
+    about = "Git worktree lifecycle manager for parallel Claude Code sessions"
+)]
 pub struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -117,18 +121,19 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::New { ref branch, ref prompt } => {
-            commands::new::run(branch, prompt.as_deref())
-        }
+        Commands::New {
+            ref branch,
+            ref prompt,
+        } => commands::new::run(branch, prompt.as_deref()),
         Commands::Start { ref branch } => commands::start::run(branch),
         Commands::Cd { ref branch } => commands::cd::run(branch.as_deref()),
         Commands::Ls => commands::ls::run(),
-        Commands::Merge { ref branch, squash } => {
-            commands::merge::run(branch.as_deref(), squash)
-        }
-        Commands::Rm { ref branch, all, force } => {
-            commands::rm::run(branch.as_deref(), all, force)
-        }
+        Commands::Merge { ref branch, squash } => commands::merge::run(branch.as_deref(), squash),
+        Commands::Rm {
+            ref branch,
+            all,
+            force,
+        } => commands::rm::run(branch.as_deref(), all, force),
         Commands::Init { replace } => commands::init::run(replace),
         Commands::Update => commands::update::run(),
         Commands::Version => commands::version::run(),
@@ -136,12 +141,16 @@ fn main() {
         Commands::Ping { json } => commands::socket_client::run_ping(json),
         Commands::Capabilities { json } => commands::socket_client::run_capabilities(json),
         Commands::Identify { json } => commands::socket_client::run_identify(json),
-        Commands::Notify { ref title, ref body, json } => {
-            commands::socket_client::run_notify(title, body, json)
-        }
-        Commands::Rpc { ref method, ref params, json } => {
-            commands::socket_client::run_raw(method, params, json)
-        }
+        Commands::Notify {
+            ref title,
+            ref body,
+            json,
+        } => commands::socket_client::run_notify(title, body, json),
+        Commands::Rpc {
+            ref method,
+            ref params,
+            json,
+        } => commands::socket_client::run_raw(method, params, json),
     };
 
     if let Err(e) = result {

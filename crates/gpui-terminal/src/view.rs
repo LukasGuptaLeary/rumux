@@ -52,6 +52,13 @@ use crate::event::{GpuiEventProxy, TerminalEvent};
 use crate::input::keystroke_to_bytes;
 use crate::render::TerminalRenderer;
 use crate::terminal::TerminalState;
+use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
+use alacritty_terminal::selection::{
+    Selection as TerminalSelection, SelectionRange, SelectionType as TerminalSelectionType,
+};
+use alacritty_terminal::term::TermMode;
+use alacritty_terminal::term::cell::LineLength;
 use gpui::{Edges, *};
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -415,8 +422,6 @@ pub struct TerminalView {
     /// Optional callback invoked with raw PTY output bytes before VTE processing
     output_callback: Option<Arc<dyn Fn(&[u8]) + Send + Sync>>,
 
-    /// Current text selection (if any)
-    selection: Option<crate::mouse::Selection>,
     /// Whether the user is currently dragging to select
     selecting: bool,
     /// Shared cell metrics updated by the canvas paint callback
@@ -553,7 +558,6 @@ impl TerminalView {
             clipboard_store_callback: None,
             exit_callback: None,
             output_callback: None,
-            selection: None,
             selecting: false,
             cell_metrics: Arc::new(parking_lot::Mutex::new(CellMetrics {
                 origin: gpui::point(px(0.0), px(0.0)),
@@ -571,6 +575,210 @@ impl TerminalView {
         let mut writer = self.stdin_writer.lock();
         let _ = writer.write_all(bytes);
         let _ = writer.flush();
+    }
+
+    fn clear_selection(&mut self) {
+        self.state.with_term_mut(|term| {
+            term.selection = None;
+        });
+    }
+
+    /// Clear any active terminal selection and stop drag-selection state.
+    pub fn deselect(&mut self, cx: &mut Context<Self>) {
+        let had_selection = self.state.with_term(|term| term.selection.is_some()) || self.selecting;
+        self.selecting = false;
+        self.clear_selection();
+        if had_selection {
+            cx.notify();
+        }
+    }
+
+    fn selection_has_visible_content(&self) -> bool {
+        self.state.with_term(|term| {
+            let Some(selection) = term.selection.as_ref() else {
+                return false;
+            };
+            let Some(range) = selection.to_range(term) else {
+                return false;
+            };
+
+            let grid = term.grid();
+            let last_visible_line = term.screen_lines().saturating_sub(1) as i32;
+            let first_line = range.start.line.0.max(0);
+            let last_line = range.end.line.0.min(last_visible_line);
+
+            for line_idx in first_line..=last_line {
+                let line = Line(line_idx);
+                let line_length = grid[line].line_length().0;
+                if line_length == 0 {
+                    continue;
+                }
+
+                let selected_start = if line_idx == range.start.line.0 {
+                    range.start.column.0
+                } else {
+                    0
+                };
+                let selected_end = if line_idx == range.end.line.0 {
+                    range.end.column.0
+                } else {
+                    term.columns().saturating_sub(1)
+                };
+                let visible_end = selected_end.min(line_length.saturating_sub(1));
+
+                if selected_start <= visible_end {
+                    return true;
+                }
+            }
+
+            false
+        })
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        self.state.with_term(|term| term.selection_to_string())
+    }
+
+    fn selection_type_from_click_count(click_count: usize) -> TerminalSelectionType {
+        match click_count {
+            1 => TerminalSelectionType::Simple,
+            2 => TerminalSelectionType::Semantic,
+            _ => TerminalSelectionType::Lines,
+        }
+    }
+
+    fn copy_selection_to_clipboard(&self, cx: &mut Context<Self>) {
+        if let Some(text) = self.selected_text().filter(|text| !text.is_empty()) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    fn paste_bytes(&self, text: &str) -> Vec<u8> {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        if self.state.mode().contains(TermMode::BRACKETED_PASTE) {
+            let mut bytes = b"\x1b[200~".to_vec();
+            bytes.extend_from_slice(normalized.as_bytes());
+            bytes.extend_from_slice(b"\x1b[201~");
+            bytes
+        } else {
+            normalized.replace('\n', "\r").into_bytes()
+        }
+    }
+
+    fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            return;
+        };
+
+        let Some(text) = clipboard.text() else {
+            return;
+        };
+
+        if text.is_empty() {
+            return;
+        }
+
+        self.clear_selection();
+        let bytes = self.paste_bytes(&text);
+        self.write_to_pty(&bytes);
+    }
+
+    /// Whether the current terminal selection contains copyable text.
+    pub fn has_selection(&self) -> bool {
+        self.selected_text().is_some_and(|text| !text.is_empty())
+    }
+
+    /// Copy the current terminal selection to the system clipboard.
+    pub fn copy_selection(&self, cx: &mut Context<Self>) {
+        self.copy_selection_to_clipboard(cx);
+    }
+
+    /// Select the entire terminal buffer, including scrollback.
+    pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.state.with_term_mut(|term| {
+            let start = AlacPoint::new(term.topmost_line(), Column(0));
+            let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+            let mut selection =
+                TerminalSelection::new(TerminalSelectionType::Lines, start, Side::Left);
+            selection.update(end, Side::Right);
+            term.selection = Some(selection);
+        });
+        self.selecting = false;
+        cx.notify();
+    }
+
+    /// Copy the entire terminal buffer, including scrollback, to the system clipboard.
+    pub fn copy_all(&self, cx: &mut Context<Self>) {
+        let text = self.state.with_term(|term| {
+            let start = AlacPoint::new(term.topmost_line(), Column(0));
+            let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+            term.bounds_to_string(start, end)
+        });
+
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    /// Paste the current system clipboard contents into the terminal.
+    pub fn paste_from_system_clipboard(&mut self, cx: &mut Context<Self>) {
+        self.paste_from_clipboard(cx);
+    }
+
+    fn is_copy_shortcut(keystroke: &Keystroke) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            keystroke.modifiers.platform
+                && !keystroke.modifiers.control
+                && !keystroke.modifiers.alt
+                && !keystroke.modifiers.shift
+                && !keystroke.modifiers.function
+                && keystroke.key == "c"
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            (keystroke.modifiers.control
+                && keystroke.modifiers.shift
+                && !keystroke.modifiers.alt
+                && !keystroke.modifiers.platform
+                && !keystroke.modifiers.function
+                && keystroke.key == "c")
+                || (keystroke.modifiers.control
+                    && !keystroke.modifiers.shift
+                    && !keystroke.modifiers.alt
+                    && !keystroke.modifiers.platform
+                    && !keystroke.modifiers.function
+                    && keystroke.key == "insert")
+        }
+    }
+
+    fn is_paste_shortcut(keystroke: &Keystroke) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            keystroke.modifiers.platform
+                && !keystroke.modifiers.control
+                && !keystroke.modifiers.alt
+                && !keystroke.modifiers.shift
+                && !keystroke.modifiers.function
+                && keystroke.key == "v"
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            (keystroke.modifiers.control
+                && keystroke.modifiers.shift
+                && !keystroke.modifiers.alt
+                && !keystroke.modifiers.platform
+                && !keystroke.modifiers.function
+                && keystroke.key == "v")
+                || (!keystroke.modifiers.control
+                    && keystroke.modifiers.shift
+                    && !keystroke.modifiers.alt
+                    && !keystroke.modifiers.platform
+                    && !keystroke.modifiers.function
+                    && keystroke.key == "insert")
+        }
     }
 
     /// Set a callback to be invoked when the terminal is resized.
@@ -765,7 +973,7 @@ impl TerminalView {
     /// Converts GPUI keystrokes to terminal escape sequences and writes them
     /// to the stdin writer. If a key handler is set and returns true, the event
     /// is consumed and not sent to the terminal.
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, _cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         // Check if key handler wants to consume this event
         if let Some(ref handler) = self.key_handler
             && handler(event)
@@ -773,7 +981,20 @@ impl TerminalView {
             return; // Event consumed by handler
         }
 
+        if Self::is_copy_shortcut(&event.keystroke) {
+            self.copy_selection_to_clipboard(cx);
+            cx.stop_propagation();
+            return;
+        }
+
+        if Self::is_paste_shortcut(&event.keystroke) {
+            self.paste_from_clipboard(cx);
+            cx.stop_propagation();
+            return;
+        }
+
         if let Some(bytes) = keystroke_to_bytes(&event.keystroke, self.state.mode()) {
+            self.clear_selection();
             let mut writer = self.stdin_writer.lock();
             let _ = writer.write_all(&bytes);
             let _ = writer.flush();
@@ -782,10 +1003,32 @@ impl TerminalView {
 
     /// Handle mouse down events.
     ///
-    /// Currently a placeholder for future mouse selection and interaction support.
-    fn pixel_to_cell(&self, position: gpui::Point<Pixels>) -> alacritty_terminal::index::Point {
+    fn pixel_to_cell(&self, position: gpui::Point<Pixels>) -> AlacPoint {
         let m = self.cell_metrics.lock();
         crate::mouse::pixel_to_cell(position, m.origin, m.cell_width, m.cell_height)
+    }
+
+    fn pixel_to_selection_anchor(&self, position: gpui::Point<Pixels>) -> (AlacPoint, Side) {
+        let metrics = self.cell_metrics.lock().clone();
+        let (cols, rows) = self
+            .state
+            .with_term(|term| (term.columns().max(1), term.screen_lines().max(1)));
+
+        let col_f32 = ((position.x - metrics.origin.x) / metrics.cell_width).floor();
+        let row_f32 = ((position.y - metrics.origin.y) / metrics.cell_height).floor();
+
+        let col = (col_f32.max(0.0) as usize).min(cols.saturating_sub(1));
+        let row = (row_f32.max(0.0) as i32).min(rows.saturating_sub(1) as i32);
+
+        let cell_origin_x = metrics.origin.x + metrics.cell_width * (col as f32);
+        let offset_x = (position.x - cell_origin_x).max(px(0.0));
+        let side = if offset_x < metrics.cell_width / 2.0 {
+            Side::Left
+        } else {
+            Side::Right
+        };
+
+        (AlacPoint::new(Line(row), Column(col)), side)
     }
 
     fn on_mouse_down(
@@ -799,23 +1042,19 @@ impl TerminalView {
         // Check if mouse reporting is enabled (programs like vim handle their own mouse)
         let mode = self.state.mode();
         if mode.intersects(
-            alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK
-                | alacritty_terminal::term::TermMode::MOUSE_MOTION
-                | alacritty_terminal::term::TermMode::MOUSE_DRAG,
+            TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG,
         ) {
+            self.clear_selection();
+            self.selecting = false;
             let cell = self.pixel_to_cell(event.position);
             let mods = crate::mouse::encode_modifiers(
                 event.modifiers.shift,
                 event.modifiers.alt,
                 event.modifiers.control,
             );
-            if let Some(bytes) = crate::mouse::mouse_button_report(
-                event.button,
-                true,
-                cell,
-                mods,
-                mode,
-            ) {
+            if let Some(bytes) =
+                crate::mouse::mouse_button_report(event.button, true, cell, mods, mode)
+            {
                 self.write_to_pty(&bytes);
             }
             cx.notify();
@@ -824,29 +1063,25 @@ impl TerminalView {
 
         // Start text selection
         if event.button == MouseButton::Left {
-            let cell = self.pixel_to_cell(event.position);
-            self.selection = Some(crate::mouse::Selection::new(
-                cell,
-                cell,
-                crate::mouse::selection_type_from_clicks(event.click_count),
-            ));
+            let (point, side) = self.pixel_to_selection_anchor(event.position);
+            let selection = TerminalSelection::new(
+                Self::selection_type_from_click_count(event.click_count),
+                point,
+                side,
+            );
+            self.state.with_term_mut(|term| {
+                term.selection = Some(selection);
+            });
             self.selecting = true;
             cx.notify();
         }
     }
 
-    fn on_mouse_up(
-        &mut self,
-        event: &MouseUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         // Check if mouse reporting is enabled
         let mode = self.state.mode();
         if mode.intersects(
-            alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK
-                | alacritty_terminal::term::TermMode::MOUSE_MOTION
-                | alacritty_terminal::term::TermMode::MOUSE_DRAG,
+            TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG,
         ) {
             let cell = self.pixel_to_cell(event.position);
             let mods = crate::mouse::encode_modifiers(
@@ -854,13 +1089,9 @@ impl TerminalView {
                 event.modifiers.alt,
                 event.modifiers.control,
             );
-            if let Some(bytes) = crate::mouse::mouse_button_report(
-                event.button,
-                false,
-                cell,
-                mods,
-                mode,
-            ) {
+            if let Some(bytes) =
+                crate::mouse::mouse_button_report(event.button, false, cell, mods, mode)
+            {
                 self.write_to_pty(&bytes);
             }
             cx.notify();
@@ -869,12 +1100,8 @@ impl TerminalView {
 
         if self.selecting {
             self.selecting = false;
-            // Copy selection to clipboard
-            if let Some(ref sel) = self.selection {
-                let text = self.extract_selection_text(sel);
-                if !text.is_empty() {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                }
+            if !self.selection_has_visible_content() {
+                self.clear_selection();
             }
             cx.notify();
         }
@@ -887,55 +1114,14 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         if self.selecting {
-            let cell = self.pixel_to_cell(event.position);
-            if let Some(ref mut sel) = self.selection {
-                sel.end = cell;
-            }
+            let (point, side) = self.pixel_to_selection_anchor(event.position);
+            self.state.with_term_mut(|term| {
+                if let Some(selection) = term.selection.as_mut() {
+                    selection.update(point, side);
+                }
+            });
             cx.notify();
         }
-    }
-
-    /// Extract selected text from the terminal grid.
-    fn extract_selection_text(&self, sel: &crate::mouse::Selection) -> String {
-        let (start, end) = if sel.start < sel.end {
-            (sel.start, sel.end)
-        } else {
-            (sel.end, sel.start)
-        };
-
-        let mut text = String::new();
-        self.state.with_term(|term| {
-            use alacritty_terminal::grid::Dimensions;
-            let grid = term.grid();
-            for line_idx in start.line.0..=end.line.0 {
-                let line = alacritty_terminal::index::Line(line_idx);
-                let col_start = if line_idx == start.line.0 {
-                    start.column.0
-                } else {
-                    0
-                };
-                let col_end = if line_idx == end.line.0 {
-                    end.column.0
-                } else {
-                    grid.columns().saturating_sub(1)
-                };
-
-                for col_idx in col_start..=col_end {
-                    let col = alacritty_terminal::index::Column(col_idx);
-                    let point = alacritty_terminal::index::Point::new(line, col);
-                    let cell = &grid[point];
-                    if cell.c != ' ' && cell.c != '\0' {
-                        text.push(cell.c);
-                    } else {
-                        text.push(' ');
-                    }
-                }
-                if line_idx != end.line.0 {
-                    text.push('\n');
-                }
-            }
-        });
-        text.trim_end().to_string()
     }
 
     /// Handle scroll events.
@@ -980,8 +1166,7 @@ impl TerminalView {
                     }
                 }
                 TerminalEvent::ClipboardLoad => {
-                    // Terminal wants to load data from clipboard
-                    // TODO: Implement clipboard integration
+                    self.paste_from_clipboard(cx);
                 }
                 TerminalEvent::Exit => {
                     if let Some(ref callback) = self.exit_callback {
@@ -1081,7 +1266,6 @@ impl Render for TerminalView {
         let renderer = self.renderer.clone();
         let resize_callback = self.resize_callback.clone();
         let padding = self.config.padding;
-        let selection = self.selection.clone();
         let metrics_for_canvas = self.cell_metrics.clone();
 
         let bg = self.renderer.palette.resolve(
@@ -1173,14 +1357,13 @@ impl Render for TerminalView {
                         // Paint the terminal with measured dimensions
                         measured_renderer.paint(bounds, padding, &term, window, cx);
 
-                        // Paint selection highlight
-                        if let Some(ref sel) = selection {
-                            let (start, end) = if sel.start < sel.end {
-                                (sel.start, sel.end)
-                            } else {
-                                (sel.end, sel.start)
-                            };
+                        let selection_range: Option<SelectionRange> = term
+                            .selection
+                            .as_ref()
+                            .and_then(|selection| selection.to_range(&term));
 
+                        // Paint selection highlight
+                        if let Some(selection) = selection_range {
                             let origin = gpui::Point {
                                 x: bounds.origin.x + padding.left,
                                 y: bounds.origin.y + padding.top,
@@ -1195,17 +1378,29 @@ impl Render for TerminalView {
                                 a: 0.3,
                             };
 
-                            for line_idx in start.line.0..=end.line.0 {
-                                let col_start = if line_idx == start.line.0 {
-                                    start.column.0
+                            let first_visible_line = selection.start.line.0.max(0);
+                            let last_visible_line = selection.end.line.0.min(rows as i32 - 1);
+
+                            for line_idx in first_visible_line..=last_visible_line {
+                                let col_start = if line_idx == selection.start.line.0 {
+                                    selection.start.column.0
                                 } else {
                                     0
                                 };
-                                let col_end = if line_idx == end.line.0 {
-                                    end.column.0
+                                let col_end = if line_idx == selection.end.line.0 {
+                                    selection.end.column.0
                                 } else {
                                     cols.saturating_sub(1)
                                 };
+                                let line = Line(line_idx);
+                                let line_length = term.grid()[line].line_length().0;
+                                if line_length == 0 {
+                                    continue;
+                                }
+                                let col_end = col_end.min(line_length.saturating_sub(1));
+                                if col_start > col_end {
+                                    continue;
+                                }
 
                                 let x = origin.x + cw * (col_start as f32);
                                 let y = origin.y + ch * (line_idx as f32);
@@ -1214,7 +1409,10 @@ impl Render for TerminalView {
                                 window.paint_quad(gpui::quad(
                                     gpui::Bounds {
                                         origin: gpui::Point { x, y },
-                                        size: gpui::Size { width: w, height: ch },
+                                        size: gpui::Size {
+                                            width: w,
+                                            height: ch,
+                                        },
                                     },
                                     px(0.0),
                                     sel_color,

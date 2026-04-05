@@ -60,7 +60,6 @@ let config = TerminalConfig {
 
 ## Current Limitations
 
-- Mouse text selection not yet implemented
 - No scrollback navigation
 
 ## License

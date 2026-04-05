@@ -114,6 +114,12 @@ use gpui::Keystroke;
 /// assert_eq!(bytes, Some(b"\r".to_vec()));
 /// ```
 pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
+    // Platform-modified keys are reserved for application/window shortcuts and
+    // should not leak printable characters into the PTY.
+    if keystroke.modifiers.platform {
+        return None;
+    }
+
     // Handle special keys first
     match keystroke.key.as_str() {
         // Basic control characters
@@ -231,6 +237,7 @@ pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u
     if let Some(key_char) = &keystroke.key_char
         && !keystroke.modifiers.control
         && !keystroke.modifiers.alt
+        && !keystroke.modifiers.function
     {
         return Some(key_char.as_bytes().to_vec());
     }
@@ -239,7 +246,7 @@ pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u
     let key = keystroke.key.as_str();
     if key.len() == 1 {
         let ch = key.chars().next().unwrap();
-        if ch.is_ascii() && !keystroke.modifiers.control {
+        if ch.is_ascii() && !keystroke.modifiers.control && !keystroke.modifiers.function {
             // Handle shift modifier for uppercase
             let ch = if keystroke.modifiers.shift {
                 ch.to_ascii_uppercase()
@@ -249,7 +256,8 @@ pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u
             return Some(vec![ch as u8]);
         }
         // For non-ASCII characters, encode as UTF-8
-        if !keystroke.modifiers.control && !keystroke.modifiers.alt {
+        if !keystroke.modifiers.control && !keystroke.modifiers.alt && !keystroke.modifiers.function
+        {
             return Some(key.as_bytes().to_vec());
         }
     }
@@ -428,5 +436,16 @@ mod tests {
 
         let space = Keystroke::parse("space").unwrap();
         assert_eq!(keystroke_to_bytes(&space, mode), Some(b" ".to_vec()));
+    }
+
+    #[test]
+    fn test_platform_modified_keys_do_not_write_to_pty() {
+        let mode = TermMode::empty();
+
+        let save = Keystroke::parse("cmd-s").unwrap();
+        assert_eq!(keystroke_to_bytes(&save, mode), None);
+
+        let copy = Keystroke::parse("cmd-c").unwrap();
+        assert_eq!(keystroke_to_bytes(&copy, mode), None);
     }
 }

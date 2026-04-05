@@ -1,19 +1,20 @@
 use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
+
+use rumux_core::runtime::{IpcEndpoint, ipc_endpoint};
+
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
 
-fn socket_path() -> PathBuf {
-    std::env::var("RUMUX_SOCKET_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp/rumux.sock"))
-}
-
-fn send_rpc(method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
-    let path = socket_path();
-    let mut stream =
-        UnixStream::connect(&path).context("Failed to connect to rumux socket. Is rumux-app running?")?;
-
+fn send_and_read_response<S>(
+    mut stream: S,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value>
+where
+    S: std::io::Read + Write,
+{
     let request = serde_json::json!({
         "id": "1",
         "method": method,
@@ -31,6 +32,27 @@ fn send_rpc(method: &str, params: serde_json::Value) -> Result<serde_json::Value
 
     let response: serde_json::Value = serde_json::from_str(&response_line)?;
     Ok(response)
+}
+
+fn send_rpc(method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+    match ipc_endpoint() {
+        #[cfg(unix)]
+        IpcEndpoint::Unix(path) => {
+            let stream = UnixStream::connect(&path).with_context(|| {
+                format!(
+                    "Failed to connect to rumux Unix socket at {}. Is rumux-app running?",
+                    path.display()
+                )
+            })?;
+            send_and_read_response(stream, method, params)
+        }
+        IpcEndpoint::Tcp(addr) => {
+            let stream = TcpStream::connect(addr).with_context(|| {
+                format!("Failed to connect to rumux TCP socket at {addr}. Is rumux-app running?")
+            })?;
+            send_and_read_response(stream, method, params)
+        }
+    }
 }
 
 pub fn run_ping(json: bool) -> Result<()> {
@@ -71,7 +93,10 @@ pub fn run_identify(json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response)?);
     } else if let Some(result) = response.get("result") {
         let app = result.get("app").and_then(|a| a.as_str()).unwrap_or("?");
-        let version = result.get("version").and_then(|v| v.as_str()).unwrap_or("?");
+        let version = result
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
         println!("{app} {version}");
     }
     Ok(())

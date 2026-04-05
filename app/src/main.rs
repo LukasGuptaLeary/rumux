@@ -4,17 +4,15 @@ mod app_state;
 mod command_palette;
 mod config;
 mod custom_commands;
-mod dropdown_menu;
 mod find_bar;
 mod notification_panel;
 mod notifications;
-mod pane;
 mod root_view;
 mod session;
 mod sidebar;
 mod socket_server;
+mod terminal_panel;
 mod terminal_surface;
-mod text_input;
 mod theme;
 mod workspace;
 
@@ -30,25 +28,42 @@ fn main() {
         gpui_component::init(cx);
         gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
 
+        // Register panel types for DockArea serialization
+        terminal_panel::register(cx);
+
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-n", NewWorkspace, None),
+            KeyBinding::new("cmd-shift-n", NewWorkspace, None),
             KeyBinding::new("ctrl-shift-w", CloseWorkspace, None),
+            KeyBinding::new("cmd-shift-w", CloseWorkspace, None),
             KeyBinding::new("ctrl-shift-d", SplitRight, None),
+            KeyBinding::new("cmd-d", SplitRight, None),
             KeyBinding::new("ctrl-alt-d", SplitDown, None),
+            KeyBinding::new("cmd-shift-d", SplitDown, None),
             KeyBinding::new("ctrl-shift-t", NewTerminal, None),
+            KeyBinding::new("cmd-t", NewTerminal, None),
             KeyBinding::new("ctrl-shift-x", CloseTerminal, None),
+            KeyBinding::new("cmd-w", CloseTerminal, None),
             KeyBinding::new("ctrl-tab", NextWorkspace, None),
             KeyBinding::new("ctrl-shift-tab", PrevWorkspace, None),
             KeyBinding::new("ctrl-pagedown", NextTerminal, None),
             KeyBinding::new("ctrl-pageup", PrevTerminal, None),
             KeyBinding::new("ctrl-shift-p", ToggleCommandPalette, None),
+            KeyBinding::new("cmd-shift-p", ToggleCommandPalette, None),
             KeyBinding::new("ctrl-shift-i", ToggleNotificationPanel, None),
+            KeyBinding::new("cmd-shift-i", ToggleNotificationPanel, None),
             KeyBinding::new("ctrl-b", ToggleSidebar, None),
+            KeyBinding::new("cmd-b", ToggleSidebar, None),
             KeyBinding::new("ctrl-shift-enter", TogglePaneZoom, None),
+            KeyBinding::new("cmd-shift-enter", TogglePaneZoom, None),
             KeyBinding::new("ctrl-shift-u", JumpToUnread, None),
-            KeyBinding::new("ctrl-shift-c", DuplicateWorkspace, None),
+            KeyBinding::new("cmd-shift-u", JumpToUnread, None),
+            KeyBinding::new("ctrl-alt-c", DuplicateWorkspace, None),
+            KeyBinding::new("cmd-shift-c", DuplicateWorkspace, None),
             KeyBinding::new("ctrl-f", ToggleFindBar, None),
+            KeyBinding::new("cmd-f", ToggleFindBar, None),
             KeyBinding::new("ctrl-q", QuitApp, None),
+            KeyBinding::new("cmd-q", QuitApp, None),
         ]);
 
         // Start socket server in background
@@ -73,9 +88,8 @@ fn main() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let root_view = cx.new(|cx| RootView::new(app_state.clone(), cx));
+                    let root_view = cx.new(|cx| RootView::new(app_state.clone(), window, cx));
                     root_view.read(cx).focus_handle.focus(window);
-                    // Wrap in gpui-component's Root for Input, Dialog, Notification support
                     cx.new(|cx| gpui_component::Root::new(root_view, window, cx))
                 },
             )?;
@@ -108,7 +122,6 @@ fn main() {
 fn detect_git_branches(state: &mut AppState, cx: &mut gpui::Context<AppState>) {
     for ws in &state.workspaces {
         ws.update(cx, |ws, cx| {
-            // Try to detect git branch from CWD
             let cwd = ws.cwd.as_deref().unwrap_or(".");
             let branch = detect_branch(cwd);
             if ws.git_branch != branch {

@@ -180,14 +180,7 @@ mod worktree_tests {
         let head = wt_repo.head().unwrap().peel_to_commit().unwrap();
         let sig = wt_repo.signature().unwrap();
         wt_repo
-            .commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                "Add squash file",
-                &tree,
-                &[&head],
-            )
+            .commit(Some("HEAD"), &sig, &sig, "Add squash file", &tree, &[&head])
             .unwrap();
 
         // Squash merge
@@ -264,8 +257,9 @@ mod worktree_tests {
 
         // Verify branch is gone
         let repo = open_repo(repo_root).unwrap();
-        assert!(repo
-            .find_branch("del-branch", git2::BranchType::Local)
-            .is_err());
+        assert!(
+            repo.find_branch("del-branch", git2::BranchType::Local)
+                .is_err()
+        );
     }
 }

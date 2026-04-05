@@ -1,50 +1,59 @@
 use gpui::*;
 
+use gpui_component::IconName;
+use gpui_component::Sizable;
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::input::{Input, InputEvent, InputState};
+
 use crate::root_view::ToggleFindBar;
-use crate::text_input::{TextInputAction, TextInputState};
 use crate::theme;
 
 pub struct FindBar {
-    input: TextInputState,
+    input: Entity<InputState>,
     pub focus_handle: FocusHandle,
     match_count: usize,
+    _sub: gpui::Subscription,
 }
 
 impl FindBar {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        let input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx);
+            state.set_placeholder("Find...", window, cx);
+            state
+        });
+
+        input.update(cx, |state, cx| {
+            state.focus(window, cx);
+        });
+
+        let sub = cx.subscribe(
+            &input,
+            |_bar: &mut Self, _editor, event: &InputEvent, cx| match event {
+                InputEvent::Change => {
+                    cx.notify();
+                }
+                _ => {}
+            },
+        );
+
         Self {
-            input: TextInputState::new(""),
-            focus_handle: cx.focus_handle(),
+            input,
+            focus_handle,
             match_count: 0,
+            _sub: sub,
         }
     }
 
-    pub fn query(&self) -> &str {
-        &self.input.text
-    }
-
-    fn on_key_down(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match self
-            .input
-            .handle_key(&event.keystroke.key, event.keystroke.modifiers.control)
-        {
-            TextInputAction::Confirm | TextInputAction::Cancel => {
-                window.dispatch_action(Box::new(ToggleFindBar), cx);
-            }
-            TextInputAction::Changed => cx.notify(),
-            TextInputAction::None => {}
-        }
+    pub fn query(&self, cx: &App) -> String {
+        self.input.read(cx).text().to_string()
     }
 }
 
 impl Render for FindBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let query = self.input.text.clone();
+        let query = self.input.read(cx).text().to_string();
         let has_query = !query.is_empty();
 
         div()
@@ -61,30 +70,10 @@ impl Render for FindBar {
             .items_center()
             .gap(px(8.0))
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(Self::on_key_down))
             .child(
                 div()
                     .min_w(px(200.0))
-                    .px(px(8.0))
-                    .py(px(3.0))
-                    .bg(rgb(theme::BG_SURFACE))
-                    .border_1()
-                    .border_color(if has_query {
-                        rgb(theme::ACCENT)
-                    } else {
-                        rgb(theme::BORDER)
-                    })
-                    .rounded(px(4.0))
-                    .text_size(px(13.0))
-                    .child(if query.is_empty() {
-                        div()
-                            .text_color(rgb(theme::TEXT_DIM))
-                            .child("Find...")
-                    } else {
-                        div()
-                            .text_color(rgb(theme::TEXT_PRIMARY))
-                            .child(format!("{query}|"))
-                    }),
+                    .child(Input::new(&self.input).appearance(false).xsmall()),
             )
             .child(
                 div()
@@ -97,16 +86,13 @@ impl Render for FindBar {
                     }),
             )
             .child(
-                div()
-                    .id("find-close")
-                    .text_size(px(12.0))
-                    .text_color(rgb(theme::TEXT_DIM))
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(rgb(theme::TEXT_PRIMARY)))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_bar, _event, window, cx| {
+                Button::new("find-close")
+                    .ghost()
+                    .compact()
+                    .icon(IconName::Close)
+                    .on_click(cx.listener(|_bar, _event, window, cx| {
                         window.dispatch_action(Box::new(ToggleFindBar), cx);
-                    }))
-                    .child("x"),
+                    })),
             )
     }
 }

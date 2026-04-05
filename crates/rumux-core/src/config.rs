@@ -129,10 +129,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         git2::Repository::init(tmp.path()).unwrap();
         let root = find_repo_root(tmp.path()).unwrap();
-        assert_eq!(
-            std::fs::canonicalize(tmp.path()).unwrap(),
-            root
-        );
+        assert_eq!(std::fs::canonicalize(tmp.path()).unwrap(), root);
     }
 
     #[test]
@@ -142,10 +139,7 @@ mod tests {
         let subdir = tmp.path().join("a").join("b");
         std::fs::create_dir_all(&subdir).unwrap();
         let root = find_repo_root(&subdir).unwrap();
-        assert_eq!(
-            std::fs::canonicalize(tmp.path()).unwrap(),
-            root
-        );
+        assert_eq!(std::fs::canonicalize(tmp.path()).unwrap(), root);
     }
 
     #[test]

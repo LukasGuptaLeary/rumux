@@ -543,7 +543,8 @@ impl TerminalRenderer {
 
             // First pass: find and draw horizontal spans of box-drawing characters
             // This draws continuous lines across multiple cells to avoid gaps
-            let mut processed_horizontal: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            let mut processed_horizontal: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
 
             let mut i = 0;
             while i < cells_vec.len() {

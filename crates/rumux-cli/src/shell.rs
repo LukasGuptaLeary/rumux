@@ -29,9 +29,7 @@ pub fn launch_claude(dir: &std::path::Path, prompt: Option<&str>) -> Result<()> 
         cmd.arg("-p").arg(p);
     }
 
-    let status = cmd
-        .status()
-        .context("Failed to launch Claude Code")?;
+    let status = cmd.status().context("Failed to launch Claude Code")?;
 
     if !status.success() {
         eprintln!(

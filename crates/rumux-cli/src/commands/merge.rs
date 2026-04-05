@@ -1,7 +1,9 @@
 use anyhow::Result;
 use console::style;
 
-use rumux_core::config::{detect_current_worktree, find_repo_root, sanitize_branch_name, worktree_path};
+use rumux_core::config::{
+    detect_current_worktree, find_repo_root, sanitize_branch_name, worktree_path,
+};
 use rumux_core::errors::RumuxError;
 use rumux_core::git_ops::merge_branch;
 
@@ -11,10 +13,7 @@ pub fn run(branch: Option<&str>, squash: bool) -> Result<()> {
 
     let sanitized = match branch {
         Some(b) => sanitize_branch_name(b),
-        None => {
-            detect_current_worktree(&cwd, &repo_root)
-                .ok_or(RumuxError::NotInWorktree)?
-        }
+        None => detect_current_worktree(&cwd, &repo_root).ok_or(RumuxError::NotInWorktree)?,
     };
 
     // Verify worktree exists
@@ -23,10 +22,7 @@ pub fn run(branch: Option<&str>, squash: bool) -> Result<()> {
         return Err(RumuxError::WorktreeNotFound(sanitized).into());
     }
 
-    eprintln!(
-        "{}",
-        style(format!("Merging '{sanitized}'...")).dim()
-    );
+    eprintln!("{}", style(format!("Merging '{sanitized}'...")).dim());
 
     let result = merge_branch(&repo_root, &sanitized, squash)?;
 

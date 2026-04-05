@@ -287,7 +287,7 @@
 //! | Application cursor mode | ✅ Full support |
 //! | Function keys (F1-F12) | ✅ Full support |
 //! | Mouse click reporting | 🔄 Partial (framework ready) |
-//! | Mouse selection | 🔄 Planned |
+//! | Mouse selection | ✅ Implemented |
 //! | Scrollback | 🔄 Planned |
 //! | Clipboard (OSC 52) | ✅ Callback support |
 //! | Title changes (OSC 0/2) | ✅ Callback support |

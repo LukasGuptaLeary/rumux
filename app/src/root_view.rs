@@ -1,15 +1,14 @@
 use gpui::*;
 
-use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::IconName;
+use gpui_component::button::{Button, ButtonVariants};
 
 use crate::app_state::AppState;
-use crate::command_palette::CommandPalette;
+use crate::command_palette::{CommandPalette, PaletteEvent};
 use crate::find_bar::FindBar;
 use crate::notification_panel::NotificationPanel;
-use crate::sidebar::Sidebar;
+use crate::sidebar::WorkspaceSidebar;
 use crate::theme;
-use crate::workspace::SplitDirection;
 
 actions!(
     rumux,
@@ -37,7 +36,7 @@ actions!(
 
 pub struct RootView {
     app_state: Entity<AppState>,
-    sidebar: Entity<Sidebar>,
+    sidebar: Entity<WorkspaceSidebar>,
     command_palette: Option<Entity<CommandPalette>>,
     notification_panel: Option<Entity<NotificationPanel>>,
     find_bar: Option<Entity<FindBar>>,
@@ -46,9 +45,15 @@ pub struct RootView {
 }
 
 impl RootView {
-    pub fn new(app_state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
+    pub fn new(app_state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar_visible = app_state.read(cx).config.sidebar_visible;
-        let sidebar = cx.new(|_cx| Sidebar::new(app_state.clone()));
+        let sidebar = cx.new(|_cx| WorkspaceSidebar::new(app_state.clone()));
+
+        // Initialize workspaces now that we have window access
+        app_state.update(cx, |state, cx| {
+            state.init_workspaces(window, cx);
+        });
+
         Self {
             app_state,
             sidebar,
@@ -74,59 +79,76 @@ impl Render for RootView {
             .text_size(px(13.0))
             .track_focus(&self.focus_handle)
             // Workspace actions
-            .on_action(cx.listener(|root, _: &NewWorkspace, _window, cx| {
-                root.app_state.update(cx, |state, cx| state.add_workspace(cx));
+            .on_action(cx.listener(|root, _: &NewWorkspace, window, cx| {
+                root.app_state
+                    .update(cx, |state, cx| state.add_workspace(window, cx));
             }))
             .on_action(cx.listener(|root, _: &CloseWorkspace, _window, cx| {
                 let idx = root.app_state.read(cx).active_workspace_idx;
                 root.app_state
-                    .update(cx, |state, cx| state.close_workspace(idx, cx));
+                    .update(cx, |state, cx| state.close_workspace(idx, _window, cx));
             }))
-            .on_action(cx.listener(|root, _: &SplitRight, _window, cx| {
-                root.app_state
-                    .update(cx, |state, cx| state.split_active(SplitDirection::Horizontal, cx));
-            }))
-            .on_action(cx.listener(|root, _: &SplitDown, _window, cx| {
-                root.app_state
-                    .update(cx, |state, cx| state.split_active(SplitDirection::Vertical, cx));
-            }))
-            .on_action(cx.listener(|root, _: &NewTerminal, _window, cx| {
-                root.app_state
-                    .update(cx, |state, cx| state.add_terminal_to_active(cx));
-            }))
-            .on_action(cx.listener(|root, _: &CloseTerminal, _window, cx| {
-                root.app_state
-                    .update(cx, |state, cx| state.close_active_terminal(cx));
-            }))
-            .on_action(cx.listener(|root, _: &NextWorkspace, _window, cx| {
-                root.app_state.update(cx, |state, cx| {
-                    let next = (state.active_workspace_idx + 1) % state.workspaces.len();
-                    state.set_active_workspace(next, cx);
+            .on_action(cx.listener(|root, _: &SplitRight, window, cx| {
+                let ws = root.app_state.read(cx).active_workspace().clone();
+                ws.update(cx, |ws, cx| {
+                    ws.split(gpui_component::Placement::Right, window, cx);
                 });
             }))
-            .on_action(cx.listener(|root, _: &PrevWorkspace, _window, cx| {
+            .on_action(cx.listener(|root, _: &SplitDown, window, cx| {
+                let ws = root.app_state.read(cx).active_workspace().clone();
+                ws.update(cx, |ws, cx| {
+                    ws.split(gpui_component::Placement::Bottom, window, cx);
+                });
+            }))
+            .on_action(cx.listener(|root, _: &NewTerminal, window, cx| {
+                let ws = root.app_state.read(cx).active_workspace().clone();
+                ws.update(cx, |ws, cx| {
+                    ws.add_terminal(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|root, _: &CloseTerminal, window, cx| {
+                let ws = root.app_state.read(cx).active_workspace().clone();
+                ws.update(cx, |ws, cx| {
+                    ws.close_active_terminal(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|root, _: &NextTerminal, window, cx| {
+                let ws = root.app_state.read(cx).active_workspace().clone();
+                ws.update(cx, |ws, cx| {
+                    ws.next_terminal(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|root, _: &PrevTerminal, window, cx| {
+                let ws = root.app_state.read(cx).active_workspace().clone();
+                ws.update(cx, |ws, cx| {
+                    ws.prev_terminal(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|root, _: &TogglePaneZoom, window, cx| {
+                let ws = root.app_state.read(cx).active_workspace().clone();
+                ws.update(cx, |ws, cx| {
+                    ws.toggle_zoom(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|root, _: &NextWorkspace, window, cx| {
+                root.app_state.update(cx, |state, cx| {
+                    let next = (state.active_workspace_idx + 1) % state.workspaces.len();
+                    state.set_active_workspace(next, window, cx);
+                });
+            }))
+            .on_action(cx.listener(|root, _: &PrevWorkspace, window, cx| {
                 root.app_state.update(cx, |state, cx| {
                     let prev = if state.active_workspace_idx == 0 {
                         state.workspaces.len() - 1
                     } else {
                         state.active_workspace_idx - 1
                     };
-                    state.set_active_workspace(prev, cx);
+                    state.set_active_workspace(prev, window, cx);
                 });
             }))
-            .on_action(cx.listener(|root, _: &NextTerminal, _window, cx| {
-                let ws = root.app_state.read(cx).active_workspace().clone();
-                let focused = ws.read(cx).focused_pane.clone();
-                focused.update(cx, |pane, _cx| pane.next_terminal());
-            }))
-            .on_action(cx.listener(|root, _: &PrevTerminal, _window, cx| {
-                let ws = root.app_state.read(cx).active_workspace().clone();
-                let focused = ws.read(cx).focused_pane.clone();
-                focused.update(cx, |pane, _cx| pane.prev_terminal());
-            }))
-            .on_action(cx.listener(|root, _: &DuplicateWorkspace, _window, cx| {
+            .on_action(cx.listener(|root, _: &DuplicateWorkspace, window, cx| {
                 root.app_state
-                    .update(cx, |state, cx| state.duplicate_workspace(cx));
+                    .update(cx, |state, cx| state.duplicate_workspace(window, cx));
             }))
             // Quit
             .on_action(cx.listener(|root, _: &QuitApp, _window, cx| {
@@ -139,45 +161,50 @@ impl Render for RootView {
                     root.command_palette = None;
                     root.focus_handle.focus(window);
                 } else {
-                    let palette = cx.new(|cx| CommandPalette::new(cx));
+                    let palette = cx.new(|cx| CommandPalette::new(window, cx));
+                    cx.subscribe(
+                        &palette,
+                        |root, _palette, event: &PaletteEvent, cx| match event {
+                            PaletteEvent::Dismiss => {
+                                root.command_palette = None;
+                                cx.notify();
+                            }
+                        },
+                    )
+                    .detach();
                     palette.read(cx).focus_handle.focus(window);
                     root.command_palette = Some(palette);
                 }
                 cx.notify();
             }))
-            .on_action(cx.listener(|root, _: &ToggleNotificationPanel, window, cx| {
-                if root.notification_panel.is_some() {
-                    root.notification_panel = None;
-                    root.focus_handle.focus(window);
-                } else {
-                    let panel =
-                        cx.new(|cx| NotificationPanel::new(root.app_state.clone(), cx));
-                    panel.read(cx).focus_handle.focus(window);
-                    root.notification_panel = Some(panel);
-                }
-                cx.notify();
-            }))
+            .on_action(
+                cx.listener(|root, _: &ToggleNotificationPanel, window, cx| {
+                    if root.notification_panel.is_some() {
+                        root.notification_panel = None;
+                        root.focus_handle.focus(window);
+                    } else {
+                        let panel = cx.new(|cx| NotificationPanel::new(root.app_state.clone(), cx));
+                        panel.read(cx).focus_handle.focus(window);
+                        root.notification_panel = Some(panel);
+                    }
+                    cx.notify();
+                }),
+            )
             .on_action(cx.listener(|root, _: &ToggleSidebar, _window, cx| {
                 root.sidebar_visible = !root.sidebar_visible;
                 cx.notify();
             }))
-            .on_action(cx.listener(|root, _: &TogglePaneZoom, _window, cx| {
-                let ws = root.app_state.read(cx).active_workspace().clone();
-                ws.update(cx, |ws, cx| {
-                    ws.toggle_zoom(&mut **cx);
-                    cx.notify();
-                });
-                cx.notify();
-            }))
-            .on_action(cx.listener(|root, _: &JumpToUnread, _window, cx| {
-                let state = root.app_state.read(cx);
-                for (i, ws) in state.workspaces.iter().enumerate() {
-                    if ws.read(cx).unread_count > 0 {
-                        drop(state);
-                        root.app_state
-                            .update(cx, |state, cx| state.set_active_workspace(i, cx));
-                        break;
-                    }
+            .on_action(cx.listener(|root, _: &JumpToUnread, window, cx| {
+                let unread_workspace = {
+                    let state = root.app_state.read(cx);
+                    state
+                        .workspaces
+                        .iter()
+                        .position(|ws| ws.read(cx).unread_count > 0)
+                };
+                if let Some(i) = unread_workspace {
+                    root.app_state
+                        .update(cx, |state, cx| state.set_active_workspace(i, window, cx));
                 }
             }))
             .on_action(cx.listener(|root, _: &ToggleFindBar, window, cx| {
@@ -185,8 +212,7 @@ impl Render for RootView {
                     root.find_bar = None;
                     root.focus_handle.focus(window);
                 } else {
-                    let bar = cx.new(|cx| FindBar::new(cx));
-                    bar.read(cx).focus_handle.focus(window);
+                    let bar = cx.new(|cx| FindBar::new(window, cx));
                     root.find_bar = Some(bar);
                 }
                 cx.notify();
@@ -220,7 +246,7 @@ impl Render for RootView {
             );
         }
 
-        // Main content
+        // Main content — active workspace's DockArea
         container = container.child(div().flex_1().overflow_hidden().child(active_ws));
 
         // Overlays
