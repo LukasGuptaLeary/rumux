@@ -414,6 +414,16 @@ pub struct TerminalView {
 
     /// Optional callback invoked with raw PTY output bytes before VTE processing
     output_callback: Option<Arc<dyn Fn(&[u8]) + Send + Sync>>,
+
+    /// Current text selection (if any)
+    selection: Option<crate::mouse::Selection>,
+    /// Whether the user is currently dragging to select
+    selecting: bool,
+    /// Cached canvas origin for mouse coordinate conversion
+    canvas_origin: gpui::Point<Pixels>,
+    /// Cached cell dimensions for mouse coordinate conversion
+    cached_cell_width: Pixels,
+    cached_cell_height: Pixels,
 }
 
 impl TerminalView {
@@ -539,6 +549,11 @@ impl TerminalView {
             clipboard_store_callback: None,
             exit_callback: None,
             output_callback: None,
+            selection: None,
+            selecting: false,
+            canvas_origin: gpui::point(px(0.0), px(0.0)),
+            cached_cell_width: px(8.0),
+            cached_cell_height: px(16.0),
         }
     }
 
@@ -764,46 +779,172 @@ impl TerminalView {
     /// Currently a placeholder for future mouse selection and interaction support.
     fn on_mouse_down(
         &mut self,
-        _event: &MouseDownEvent,
+        event: &MouseDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Request focus when clicking the terminal
         window.focus(&self.focus_handle);
-        cx.notify();
 
-        // TODO: Implement mouse selection
-        // - Convert pixel coordinates to cell coordinates
-        // - Start selection at clicked cell
-        // - Send mouse reports if mouse tracking is enabled
+        // Check if mouse reporting is enabled (programs like vim handle their own mouse)
+        let mode = self.state.mode();
+        if mode.intersects(
+            alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK
+                | alacritty_terminal::term::TermMode::MOUSE_MOTION
+                | alacritty_terminal::term::TermMode::MOUSE_DRAG,
+        ) {
+            let cell = crate::mouse::pixel_to_cell(
+                event.position,
+                self.canvas_origin,
+                self.cached_cell_width,
+                self.cached_cell_height,
+            );
+            let mods = crate::mouse::encode_modifiers(
+                event.modifiers.shift,
+                event.modifiers.alt,
+                event.modifiers.control,
+            );
+            if let Some(bytes) = crate::mouse::mouse_button_report(
+                event.button,
+                true,
+                cell,
+                mods,
+                mode,
+            ) {
+                self.write_to_pty(&bytes);
+            }
+            cx.notify();
+            return;
+        }
+
+        // Start text selection
+        if event.button == MouseButton::Left {
+            let cell = crate::mouse::pixel_to_cell(
+                event.position,
+                self.canvas_origin,
+                self.cached_cell_width,
+                self.cached_cell_height,
+            );
+            self.selection = Some(crate::mouse::Selection::new(
+                cell,
+                cell,
+                crate::mouse::selection_type_from_clicks(event.click_count),
+            ));
+            self.selecting = true;
+            cx.notify();
+        }
     }
 
-    /// Handle mouse up events.
-    ///
-    /// Currently a placeholder for future mouse selection support.
     fn on_mouse_up(
         &mut self,
-        _event: &MouseUpEvent,
+        event: &MouseUpEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        // TODO: Implement mouse selection
-        // - End selection at released cell
-        // - Copy selection to clipboard if configured
+        // Check if mouse reporting is enabled
+        let mode = self.state.mode();
+        if mode.intersects(
+            alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK
+                | alacritty_terminal::term::TermMode::MOUSE_MOTION
+                | alacritty_terminal::term::TermMode::MOUSE_DRAG,
+        ) {
+            let cell = crate::mouse::pixel_to_cell(
+                event.position,
+                self.canvas_origin,
+                self.cached_cell_width,
+                self.cached_cell_height,
+            );
+            let mods = crate::mouse::encode_modifiers(
+                event.modifiers.shift,
+                event.modifiers.alt,
+                event.modifiers.control,
+            );
+            if let Some(bytes) = crate::mouse::mouse_button_report(
+                event.button,
+                false,
+                cell,
+                mods,
+                mode,
+            ) {
+                self.write_to_pty(&bytes);
+            }
+            cx.notify();
+            return;
+        }
+
+        if self.selecting {
+            self.selecting = false;
+            // Copy selection to clipboard
+            if let Some(ref sel) = self.selection {
+                let text = self.extract_selection_text(sel);
+                if !text.is_empty() {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                }
+            }
+            cx.notify();
+        }
     }
 
-    /// Handle mouse move events.
-    ///
-    /// Currently a placeholder for future mouse selection support.
     fn on_mouse_move(
         &mut self,
-        _event: &MouseMoveEvent,
+        event: &MouseMoveEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        // TODO: Implement mouse selection
-        // - Update selection range while dragging
-        // - Send mouse motion reports if mouse tracking is enabled
+        if self.selecting {
+            let cell = crate::mouse::pixel_to_cell(
+                event.position,
+                self.canvas_origin,
+                self.cached_cell_width,
+                self.cached_cell_height,
+            );
+            if let Some(ref mut sel) = self.selection {
+                sel.end = cell;
+            }
+            cx.notify();
+        }
+    }
+
+    /// Extract selected text from the terminal grid.
+    fn extract_selection_text(&self, sel: &crate::mouse::Selection) -> String {
+        let (start, end) = if sel.start < sel.end {
+            (sel.start, sel.end)
+        } else {
+            (sel.end, sel.start)
+        };
+
+        let mut text = String::new();
+        self.state.with_term(|term| {
+            use alacritty_terminal::grid::Dimensions;
+            let grid = term.grid();
+            for line_idx in start.line.0..=end.line.0 {
+                let line = alacritty_terminal::index::Line(line_idx);
+                let col_start = if line_idx == start.line.0 {
+                    start.column.0
+                } else {
+                    0
+                };
+                let col_end = if line_idx == end.line.0 {
+                    end.column.0
+                } else {
+                    grid.columns().saturating_sub(1)
+                };
+
+                for col_idx in col_start..=col_end {
+                    let col = alacritty_terminal::index::Column(col_idx);
+                    let point = alacritty_terminal::index::Point::new(line, col);
+                    let cell = &grid[point];
+                    if cell.c != ' ' && cell.c != '\0' {
+                        text.push(cell.c);
+                    } else {
+                        text.push(' ');
+                    }
+                }
+                if line_idx != end.line.0 {
+                    text.push('\n');
+                }
+            }
+        });
+        text.trim_end().to_string()
     }
 
     /// Handle scroll events.
@@ -949,6 +1090,13 @@ impl Render for TerminalView {
         let renderer = self.renderer.clone();
         let resize_callback = self.resize_callback.clone();
         let padding = self.config.padding;
+        let selection = self.selection.clone();
+
+        // Cache cell metrics for mouse handlers (approximate until canvas measures)
+        // These get more accurate after first render
+        self.canvas_origin = gpui::point(self.config.padding.left, self.config.padding.top);
+        self.cached_cell_width = self.renderer.cell_width;
+        self.cached_cell_height = self.renderer.cell_height;
 
         let bg = self.renderer.palette.resolve(
             alacritty_terminal::vte::ansi::Color::Named(
@@ -1027,6 +1175,58 @@ impl Render for TerminalView {
 
                         // Paint the terminal with measured dimensions
                         measured_renderer.paint(bounds, padding, &term, window, cx);
+
+                        // Paint selection highlight
+                        if let Some(ref sel) = selection {
+                            let (start, end) = if sel.start < sel.end {
+                                (sel.start, sel.end)
+                            } else {
+                                (sel.end, sel.start)
+                            };
+
+                            let origin = gpui::Point {
+                                x: bounds.origin.x + padding.left,
+                                y: bounds.origin.y + padding.top,
+                            };
+                            let cw = measured_renderer.cell_width;
+                            let ch = measured_renderer.cell_height;
+
+                            let sel_color = gpui::Hsla {
+                                h: 0.6,
+                                s: 0.5,
+                                l: 0.5,
+                                a: 0.3,
+                            };
+
+                            for line_idx in start.line.0..=end.line.0 {
+                                let col_start = if line_idx == start.line.0 {
+                                    start.column.0
+                                } else {
+                                    0
+                                };
+                                let col_end = if line_idx == end.line.0 {
+                                    end.column.0
+                                } else {
+                                    cols.saturating_sub(1)
+                                };
+
+                                let x = origin.x + cw * (col_start as f32);
+                                let y = origin.y + ch * (line_idx as f32);
+                                let w = cw * ((col_end - col_start + 1) as f32);
+
+                                window.paint_quad(gpui::quad(
+                                    gpui::Bounds {
+                                        origin: gpui::Point { x, y },
+                                        size: gpui::Size { width: w, height: ch },
+                                    },
+                                    px(0.0),
+                                    sel_color,
+                                    gpui::Edges::<Pixels>::default(),
+                                    gpui::transparent_black(),
+                                    Default::default(),
+                                ));
+                            }
+                        }
                     },
                 )
                 .size_full(),
