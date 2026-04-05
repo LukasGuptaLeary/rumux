@@ -258,10 +258,17 @@ impl Render for Pane {
             if is_renaming {
                 if let Some(ref editor) = self.rename_editor {
                     tab = tab.child(
-                        Input::new(editor)
-                            .appearance(false)
-                            .bordered(false)
-                            .xsmall(),
+                        div()
+                            .min_w(px(120.0))
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .child(
+                                Input::new(editor)
+                                    .appearance(false)
+                                    .bordered(false)
+                                    .xsmall(),
+                            ),
                     );
                 }
             } else {

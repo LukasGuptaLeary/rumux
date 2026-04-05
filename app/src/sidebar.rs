@@ -126,12 +126,17 @@ impl Render for Sidebar {
 
             let content = if is_renaming {
                 if let Some(ref editor) = self.rename_editor {
-                    div().child(
-                        Input::new(editor)
-                            .appearance(false)
-                            .bordered(false)
-                            .xsmall(),
-                    )
+                    div()
+                        .w_full()
+                        .h(px(22.0))
+                        .flex()
+                        .items_center()
+                        .child(
+                            Input::new(editor)
+                                .appearance(false)
+                                .bordered(false)
+                                .xsmall(),
+                        )
                 } else {
                     div()
                 }
