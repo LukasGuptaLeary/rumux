@@ -101,7 +101,7 @@ esac
 target="${arch_part}-${os_part}"
 
 case "$target" in
-    x86_64-unknown-linux-gnu|x86_64-apple-darwin|aarch64-apple-darwin) ;;
+    x86_64-unknown-linux-gnu|aarch64-apple-darwin) ;;
     *)
         echo "No prebuilt installer asset is published for $target yet." >&2
         echo "Use a source install instead: cargo install --git https://github.com/${REPO}.git rumux-cli --bin rumux" >&2

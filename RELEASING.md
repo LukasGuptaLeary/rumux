@@ -27,7 +27,6 @@ CLI release artifacts are built and uploaded by GitHub Actions in `.github/workf
 Supported release assets today:
 
 - `rumux-x86_64-unknown-linux-gnu.tar.gz`
-- `rumux-x86_64-apple-darwin.tar.gz`
 - `rumux-aarch64-apple-darwin.tar.gz`
 - `rumux-x86_64-pc-windows-msvc.zip`
 - `rumux-checksums.txt`

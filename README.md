@@ -38,8 +38,9 @@ cargo install --git https://github.com/LukasGuptaLeary/rumux.git rumux-cli --bin
 
 Notes:
 
-- The installer currently publishes prebuilt CLI binaries for macOS (`x86_64`, `aarch64`) and Linux (`x86_64`)
+- The installer currently publishes prebuilt CLI binaries for macOS (`aarch64`) and Linux (`x86_64`)
 - Windows users should download the CLI asset directly from GitHub Releases for now
+- Intel macOS users should use the source install path for now
 - Git available on `PATH` for normal `rumux` usage
 - Rust 1.85 or newer is only required for source installs and local builds
 - For the desktop app, the native graphics and windowing libraries required by GPUI on your platform
