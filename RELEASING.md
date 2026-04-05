@@ -22,21 +22,32 @@ The workspace crates inherit their version from the root manifest.
 
 ## 3. Build Release Artifacts
 
-```bash
-cargo build -p rumux-cli --release
-cargo build -p rumux-app --release
-```
+CLI release artifacts are built and uploaded by GitHub Actions in `.github/workflows/release-cli.yml`.
 
-Expected outputs:
+Supported release assets today:
 
-- `target/release/rumux`
-- `target/release/rumux-app`
+- `rumux-x86_64-unknown-linux-gnu.tar.gz`
+- `rumux-x86_64-apple-darwin.tar.gz`
+- `rumux-aarch64-apple-darwin.tar.gz`
+- `rumux-x86_64-pc-windows-msvc.zip`
+- `rumux-checksums.txt`
+
+The installer script at [install.sh](install.sh) consumes those assets directly from GitHub Releases.
+
+Desktop app artifacts are still a separate manual packaging task.
 
 ## 4. Tag and Publish
 
 - Create a git tag like `v0.1.0`
-- Draft release notes from the changelog and merged PRs
-- Attach release binaries if you are distributing GitHub release artifacts
+- Push the tag
+- Let the `Release CLI` workflow attach CLI binaries and checksums to the draft release
+- Review release notes, then publish the draft release
+
+If you need to rebuild assets for an existing draft tag, run the workflow manually:
+
+```bash
+gh workflow run release-cli.yml -f tag=v0.1.0
+```
 
 ## 5. Optional Crates.io Publish
 

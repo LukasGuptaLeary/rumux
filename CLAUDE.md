@@ -18,7 +18,7 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace
 
-# Install
+# Install from the current checkout
 cargo install --path crates/rumux-cli
 cp target/release/rumux-app ~/.cargo/bin/
 ```

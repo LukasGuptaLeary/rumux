@@ -18,16 +18,30 @@ The desktop shell follows the same architectural direction as Zed: pure Rust, GP
 
 ## Install
 
-Current installation is source-first:
+Preferred CLI install on macOS and Linux:
 
 ```bash
-cargo install --path crates/rumux-cli
+curl -fsSL https://raw.githubusercontent.com/LukasGuptaLeary/rumux/main/install.sh | sh
 ```
 
-Requirements:
+Install a specific release:
 
-- Rust 1.85 or newer
-- Git available on `PATH`
+```bash
+curl -fsSL https://raw.githubusercontent.com/LukasGuptaLeary/rumux/main/install.sh | sh -s -- --version v0.1.0
+```
+
+Source install fallback:
+
+```bash
+cargo install --git https://github.com/LukasGuptaLeary/rumux.git rumux-cli --bin rumux
+```
+
+Notes:
+
+- The installer currently publishes prebuilt CLI binaries for macOS (`x86_64`, `aarch64`) and Linux (`x86_64`)
+- Windows users should download the CLI asset directly from GitHub Releases for now
+- Git available on `PATH` for normal `rumux` usage
+- Rust 1.85 or newer is only required for source installs and local builds
 - For the desktop app, the native graphics and windowing libraries required by GPUI on your platform
 
 Desktop app build and run:
@@ -206,6 +220,7 @@ rumux is backward compatible with cmux:
 - [SUPPORT.md](SUPPORT.md) for support boundaries and issue routing
 - [RELEASING.md](RELEASING.md) for release steps
 - [CLAUDE.md](CLAUDE.md) for the current architecture map and build notes used in this repo
+- [install.sh](install.sh) for the release-based CLI installer
 
 ## License
 
