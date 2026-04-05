@@ -60,6 +60,7 @@ impl TerminalPanel {
         self.name = name;
     }
 
+    #[allow(dead_code)]
     pub fn write_to_terminal(&self, bytes: &[u8], cx: &mut App) {
         self.terminal.update(cx, |view, _cx| {
             view.write_to_pty(bytes);
@@ -307,20 +308,24 @@ impl Panel for TerminalPanel {
     ) {
         self.tab_panel = Some(tab_panel);
         let terminal_focus = self.terminal.read(cx).focus_handle().clone();
-        self.focus_subscription = Some(cx.on_focus(&terminal_focus, window, |panel, _window, cx| {
-            let Some(tab_panel) = panel.tab_panel.as_ref().and_then(|tab_panel| tab_panel.upgrade())
-            else {
-                return;
-            };
-            let Some(dock_area) = tab_panel.read(cx).dock_area() else {
-                return;
-            };
+        self.focus_subscription =
+            Some(cx.on_focus(&terminal_focus, window, |panel, _window, cx| {
+                let Some(tab_panel) = panel
+                    .tab_panel
+                    .as_ref()
+                    .and_then(|tab_panel| tab_panel.upgrade())
+                else {
+                    return;
+                };
+                let Some(dock_area) = tab_panel.read(cx).dock_area() else {
+                    return;
+                };
 
-            let tab_panel = tab_panel.downgrade();
-            dock_area.update(cx, |dock_area, _cx| {
-                dock_area.remember_tab_panel(tab_panel.clone());
-            });
-        }));
+                let tab_panel = tab_panel.downgrade();
+                dock_area.update(cx, |dock_area, _cx| {
+                    dock_area.remember_tab_panel(tab_panel.clone());
+                });
+            }));
     }
 
     fn on_removed(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {

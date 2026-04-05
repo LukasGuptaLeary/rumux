@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use rumux_core::runtime::rumux_config_dir;
 use serde::Deserialize;

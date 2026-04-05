@@ -44,12 +44,11 @@ rumux/
 │   ├── Cargo.toml
 │   └── src/
 │       ├── main.rs               # App entry, window creation, keybindings
-│       ├── v2/                   # Canonical desktop shell
-│       │   ├── app_state.rs      # Global state: workspaces, persistence wiring
-│       │   ├── root_view.rs      # Top-level view: sidebar + active workspace + overlays
-│       │   ├── sidebar.rs        # Vertical workspace sidebar with rename/select controls
-│       │   ├── terminal_panel.rs # Dock-compatible terminal panel
-│       │   └── workspace.rs      # Workspace entity backed by DockArea
+│       ├── app_state.rs          # Global state: workspaces, persistence wiring
+│       ├── root_view.rs          # Top-level view: sidebar + active workspace + overlays
+│       ├── sidebar.rs            # Vertical workspace sidebar with rename/select controls
+│       ├── terminal_panel.rs     # Dock-compatible terminal panel
+│       ├── workspace.rs          # Workspace entity backed by DockArea
 │       ├── terminal_surface.rs   # PTY spawning + TerminalView creation
 │       ├── command_palette.rs    # Fuzzy command palette overlay (Ctrl+Shift+P)
 │       ├── notifications.rs      # OSC 777/99/9 parser
@@ -73,6 +72,8 @@ Pure Rust, GPU-accelerated via GPUI framework (from Zed).
 - **Session restore**: Dock layout and terminal launch directories are serialized per workspace
 - **Socket API**: local RPC over Unix sockets on Unix and loopback TCP on non-Unix
 - **Notifications**: OSC 777/99/9 escape sequences parsed from PTY output
+
+The legacy `v1` desktop path has been removed. Files under `app/src/` are the canonical shell.
 
 ### Vendored gpui-terminal
 The `crates/gpui-terminal/` directory is a vendored copy of https://github.com/zortax/gpui-terminal with one patch: the div background color uses the terminal palette instead of a hardcoded value.

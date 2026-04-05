@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use gpui_terminal::ColorPalette;
 
 pub fn catppuccin_mocha() -> ColorPalette {

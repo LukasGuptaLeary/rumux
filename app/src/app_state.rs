@@ -56,7 +56,12 @@ impl AppState {
         &self.workspaces[self.active_workspace_idx]
     }
 
-    pub fn set_active_workspace(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_active_workspace(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if idx < self.workspaces.len() {
             self.active_workspace_idx = idx;
             cx.notify();
@@ -129,6 +134,7 @@ impl AppState {
         let _ = session::save_session(&data);
     }
 
+    #[allow(dead_code)]
     pub fn write_to_target_terminal(&self, text: &str, cx: &mut Context<Self>) {
         let workspace = self.active_workspace().clone();
         workspace.update(cx, |workspace, cx| {

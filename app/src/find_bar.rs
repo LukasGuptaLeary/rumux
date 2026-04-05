@@ -46,6 +46,7 @@ impl FindBar {
         }
     }
 
+    #[allow(dead_code)]
     pub fn query(&self, cx: &App) -> String {
         self.input.read(cx).text().to_string()
     }

@@ -4,10 +4,10 @@ use console::style;
 pub fn run() -> Result<()> {
     println!("rumux {}", env!("CARGO_PKG_VERSION"));
     println!();
-    println!("To update rumux, run:");
-    println!("  {}", style("cargo install rumux").green());
-    println!();
-    println!("For local development:");
-    println!("  {}", style("cargo install --path .").green());
+    println!("To update rumux from a source checkout, run:");
+    println!(
+        "  {}",
+        style("cargo install --path crates/rumux-cli --force").green()
+    );
     Ok(())
 }

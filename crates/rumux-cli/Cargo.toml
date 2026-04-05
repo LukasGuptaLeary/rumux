@@ -1,9 +1,12 @@
 [package]
 name = "rumux-cli"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "CLI for rumux: git worktree lifecycle manager for parallel Claude Code sessions"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "rumux"

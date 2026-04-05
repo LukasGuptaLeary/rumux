@@ -1,2 +1,8 @@
 /target
 .idea/
+.claude/
+.codex
+.codex/
+.DS_Store
+*.swp
+*.swo

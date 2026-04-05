@@ -9,8 +9,8 @@ use gpui_component::dock::{
 use uuid::Uuid;
 
 use crate::session::WorkspaceSession;
-use crate::terminal_surface::spawn_terminal_view;
 use crate::terminal_panel::TerminalPanel;
+use crate::terminal_surface::spawn_terminal_view;
 use crate::theme;
 
 pub enum WorkspaceEvent {
@@ -251,6 +251,7 @@ impl Workspace {
         }
     }
 
+    #[allow(dead_code)]
     pub fn write_to_target_terminal(&self, text: &str, cx: &mut App) {
         if let Some(panel) = self.target_terminal_panel(cx) {
             panel.update(cx, |panel, cx| {
@@ -263,6 +264,7 @@ impl Workspace {
         self.dock_area.read(cx).target_tab_panel(window, cx)
     }
 
+    #[allow(dead_code)]
     fn target_terminal_panel(&self, cx: &App) -> Option<Entity<TerminalPanel>> {
         let tab_panel = self.target_tab_panel(None, cx)?;
         let active_panel = tab_panel.read(cx).active_panel(cx)?;

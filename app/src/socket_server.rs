@@ -12,6 +12,7 @@ pub struct RpcRequest {
     pub id: String,
     pub method: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub params: serde_json::Value,
 }
 

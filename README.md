@@ -1,12 +1,42 @@
 # rumux
 
-A git worktree lifecycle manager for running parallel Claude Code sessions. Rust rewrite of [cmux](https://github.com/craigsc/cmux).
+A Rust-native replacement for [cmux](https://github.com/craigsc/cmux) that combines:
+
+- A CLI for git worktree lifecycle management during parallel agent or shell sessions
+- A GPUI desktop application for docked terminals, workspace switching, and session restore
+
+The desktop shell follows the same architectural direction as Zed: pure Rust, GPUI, and native docking primitives rather than a webview stack.
+
+## Highlights
+
+- Git worktree orchestration for parallel development sessions
+- Native desktop terminal UI built with GPUI and wgpu
+- Docked tabs, split panes, zoom, and multi-workspace sidebar
+- Restorable workspace layout and terminal launch directories
+- Local RPC endpoint for automation and editor or agent integration
+- Backward compatibility with existing cmux `.worktrees/` layouts and setup hooks
 
 ## Install
 
+Current installation is source-first:
+
 ```bash
-cargo install rumux
+cargo install --path crates/rumux-cli
 ```
+
+Requirements:
+
+- Rust 1.85 or newer
+- Git available on `PATH`
+- For the desktop app, the native graphics and windowing libraries required by GPUI on your platform
+
+Desktop app build and run:
+
+```bash
+cargo run -p rumux-app
+```
+
+On Linux, expect to need the usual development headers for Wayland and/or X11, `xkbcommon`, `fontconfig`, and `dbus` before building the desktop app.
 
 ## Usage
 
@@ -45,7 +75,45 @@ rumux merge feature-auth
 rumux rm feature-auth
 ```
 
-## Setup Hook
+## Desktop App
+
+rumux includes a pure-Rust desktop application built on GPUI.
+
+### Architecture
+
+- **Rendering:** GPUI + wgpu. No Tauri, React, xterm.js, or browser runtime.
+- **Workspace shell:** `AppState -> Workspace -> DockArea -> TerminalPanel -> TerminalView`
+- **Docking model:** `gpui-component` dock/tree primitives drive tabbed terminals, pane splits, and zoom state.
+- **Terminal runtime:** `portable-pty` + `alacritty_terminal` + `gpui-terminal`
+- **Persistence:** workspaces restore dock layout and terminal launch directories across restarts.
+- **IPC:** Unix domain sockets on Unix by default, loopback TCP on non-Unix. Override with `RUMUX_SOCKET_PATH` or `RUMUX_SOCKET_ADDR`.
+
+### Features
+
+- Multiple workspaces with a vertical sidebar
+- Docked terminal tabs and split panes
+- Session save and restore for workspace layout
+- Command palette, notification panel, and find overlay
+- Ghostty-compatible terminal font configuration
+- Local RPC endpoint for automation and integration
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| Ctrl/Cmd+Shift+N | New workspace |
+| Ctrl/Cmd+Shift+W | Close workspace |
+| Ctrl/Cmd+Shift+T or Cmd+T | New terminal |
+| Ctrl/Cmd+Shift+X or Cmd+W | Close terminal |
+| Ctrl+Shift+D or Cmd+D | Split right |
+| Ctrl+Alt+D or Cmd+Shift+D | Split down |
+| Ctrl/Cmd+Shift+P | Command palette |
+| Ctrl/Cmd+Shift+I | Notification panel |
+| Ctrl/Cmd+F | Find in terminal |
+| Ctrl/Cmd+B | Toggle sidebar |
+| Ctrl/Cmd+Q | Quit |
+
+## Setup Hooks
 
 rumux can automatically set up new worktrees (install dependencies, symlink config files, etc.) by running a hook script.
 
@@ -117,7 +185,7 @@ rumux completions fish > ~/.config/fish/completions/rumux.fish
 
 ## How It Works
 
-rumux manages git worktrees under a `.worktrees/` directory in your repo root. Each worktree gets its own branch, working directory, and isolated file state — perfect for running multiple Claude Code sessions without conflicts.
+rumux manages git worktrees under a `.worktrees/` directory in your repo root. Each worktree gets its own branch, working directory, and isolated file state, which makes it practical to run multiple agent or shell sessions without conflicts.
 
 - **Worktrees** are stored in `<repo_root>/.worktrees/<branch>/`
 - **Branches** are sanitized: `feature/foo` becomes `feature-foo`
@@ -131,58 +199,16 @@ rumux is backward compatible with cmux:
 - Worktrees are stored in the same `.worktrees/` location
 - If `.cmux/setup` exists but `.rumux/setup` does not, the legacy hook is used (with a note to rename it)
 
-## Desktop App
+## Development
 
-rumux includes a pure-Rust desktop application built on GPUI, following the same architectural direction as Zed rather than a webview stack.
-
-### Current Architecture
-
-- **Rendering:** GPUI + wgpu. No Tauri, React, xterm.js, or browser runtime.
-- **Workspace shell:** `AppState -> Workspace -> DockArea -> TerminalPanel -> TerminalView`
-- **Docking model:** `gpui-component` dock/tree primitives drive tabbed terminals, pane splits, and zoom state.
-- **Terminal runtime:** `portable-pty` + `alacritty_terminal` + `gpui-terminal`
-- **Persistence:** workspaces now restore their dock layout and terminal launch directories across restarts.
-- **IPC:** Unix domain sockets on Unix by default, loopback TCP on non-Unix. Override with `RUMUX_SOCKET_PATH` or `RUMUX_SOCKET_ADDR`.
-
-### Features
-
-- Multiple workspaces with a vertical sidebar
-- Docked terminal tabs and split panes
-- Session save and restore for workspace layout
-- Command palette and notification panel overlays
-- Ghostty-compatible terminal font configuration
-- Local RPC endpoint for automation and integration
-
-### Building the Desktop App
-
-Prerequisites: Rust plus the native libraries required by GPUI/wgpu on your platform.
-
-```bash
-# Debug
-cargo run -p rumux-app
-
-# Release
-cargo build -p rumux-app --release
-```
-
-The binary is written to `target/release/rumux-app`.
-
-### Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| Ctrl/Cmd+Shift+N | New workspace |
-| Ctrl/Cmd+Shift+W | Close workspace |
-| Ctrl/Cmd+Shift+T or Cmd+T | New terminal |
-| Ctrl/Cmd+Shift+X or Cmd+W | Close terminal |
-| Ctrl+Shift+D or Cmd+D | Split right |
-| Ctrl+Alt+D or Cmd+Shift+D | Split down |
-| Ctrl/Cmd+Shift+P | Command palette |
-| Ctrl/Cmd+Shift+I | Notification panel |
-| Ctrl/Cmd+F | Find in terminal |
-| Ctrl/Cmd+B | Toggle sidebar |
-| Ctrl/Cmd+Q | Quit |
+- [CONTRIBUTING.md](CONTRIBUTING.md) for setup, workflow, and testing expectations
+- [SECURITY.md](SECURITY.md) for vulnerability reporting
+- [SUPPORT.md](SUPPORT.md) for support boundaries and issue routing
+- [RELEASING.md](RELEASING.md) for release steps
+- [CLAUDE.md](CLAUDE.md) for the current architecture map and build notes used in this repo
 
 ## License
 
-MIT
+rumux source is available under the MIT license. See [LICENSE](LICENSE).
+
+This repository also vendors third-party crates that retain their original licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.
