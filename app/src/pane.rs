@@ -208,7 +208,7 @@ impl Render for Pane {
 
         // Terminal tabs using gpui-component TabBar (IS the header)
         let mut tab_bar = TabBar::new("pane-tabs")
-            .xsmall()
+            .small()
             .selected_index(self.active_idx)
             .on_click(cx.listener(|pane, idx: &usize, _window, cx| {
                 pane.activate_terminal(*idx);
@@ -234,7 +234,7 @@ impl Render for Pane {
                     );
                 }
             } else {
-                tab = tab.label(SharedString::from(tab_name));
+                tab = tab.child(div().text_sm().child(tab_name));
 
                 if self.terminals.len() > 1 {
                     tab = tab.suffix(
