@@ -32,9 +32,14 @@ impl Sidebar {
         let editor = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
             state.set_value(&name_owned, window, cx);
-            state.focus(window, cx);
             state
         });
+
+        // Focus and select all after entity creation
+        editor.update(cx, |state, cx| {
+            state.focus(window, cx);
+        });
+        window.dispatch_keystroke(Keystroke::parse("ctrl-a").expect("valid keystroke"), cx);
 
         let app_state = self.app_state.clone();
         let sub = cx.subscribe(&editor, move |sidebar: &mut Self, editor, event: &InputEvent, cx| {
