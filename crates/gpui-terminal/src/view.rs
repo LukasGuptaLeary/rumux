@@ -419,11 +419,15 @@ pub struct TerminalView {
     selection: Option<crate::mouse::Selection>,
     /// Whether the user is currently dragging to select
     selecting: bool,
-    /// Cached canvas origin for mouse coordinate conversion
-    canvas_origin: gpui::Point<Pixels>,
-    /// Cached cell dimensions for mouse coordinate conversion
-    cached_cell_width: Pixels,
-    cached_cell_height: Pixels,
+    /// Shared cell metrics updated by the canvas paint callback
+    cell_metrics: Arc<parking_lot::Mutex<CellMetrics>>,
+}
+
+#[derive(Clone)]
+struct CellMetrics {
+    origin: gpui::Point<Pixels>,
+    cell_width: Pixels,
+    cell_height: Pixels,
 }
 
 impl TerminalView {
@@ -551,9 +555,11 @@ impl TerminalView {
             output_callback: None,
             selection: None,
             selecting: false,
-            canvas_origin: gpui::point(px(0.0), px(0.0)),
-            cached_cell_width: px(8.0),
-            cached_cell_height: px(16.0),
+            cell_metrics: Arc::new(parking_lot::Mutex::new(CellMetrics {
+                origin: gpui::point(px(0.0), px(0.0)),
+                cell_width: px(8.0),
+                cell_height: px(16.0),
+            })),
         }
     }
 
@@ -777,6 +783,11 @@ impl TerminalView {
     /// Handle mouse down events.
     ///
     /// Currently a placeholder for future mouse selection and interaction support.
+    fn pixel_to_cell(&self, position: gpui::Point<Pixels>) -> alacritty_terminal::index::Point {
+        let m = self.cell_metrics.lock();
+        crate::mouse::pixel_to_cell(position, m.origin, m.cell_width, m.cell_height)
+    }
+
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -792,12 +803,7 @@ impl TerminalView {
                 | alacritty_terminal::term::TermMode::MOUSE_MOTION
                 | alacritty_terminal::term::TermMode::MOUSE_DRAG,
         ) {
-            let cell = crate::mouse::pixel_to_cell(
-                event.position,
-                self.canvas_origin,
-                self.cached_cell_width,
-                self.cached_cell_height,
-            );
+            let cell = self.pixel_to_cell(event.position);
             let mods = crate::mouse::encode_modifiers(
                 event.modifiers.shift,
                 event.modifiers.alt,
@@ -818,12 +824,7 @@ impl TerminalView {
 
         // Start text selection
         if event.button == MouseButton::Left {
-            let cell = crate::mouse::pixel_to_cell(
-                event.position,
-                self.canvas_origin,
-                self.cached_cell_width,
-                self.cached_cell_height,
-            );
+            let cell = self.pixel_to_cell(event.position);
             self.selection = Some(crate::mouse::Selection::new(
                 cell,
                 cell,
@@ -847,12 +848,7 @@ impl TerminalView {
                 | alacritty_terminal::term::TermMode::MOUSE_MOTION
                 | alacritty_terminal::term::TermMode::MOUSE_DRAG,
         ) {
-            let cell = crate::mouse::pixel_to_cell(
-                event.position,
-                self.canvas_origin,
-                self.cached_cell_width,
-                self.cached_cell_height,
-            );
+            let cell = self.pixel_to_cell(event.position);
             let mods = crate::mouse::encode_modifiers(
                 event.modifiers.shift,
                 event.modifiers.alt,
@@ -891,12 +887,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         if self.selecting {
-            let cell = crate::mouse::pixel_to_cell(
-                event.position,
-                self.canvas_origin,
-                self.cached_cell_width,
-                self.cached_cell_height,
-            );
+            let cell = self.pixel_to_cell(event.position);
             if let Some(ref mut sel) = self.selection {
                 sel.end = cell;
             }
@@ -1091,12 +1082,7 @@ impl Render for TerminalView {
         let resize_callback = self.resize_callback.clone();
         let padding = self.config.padding;
         let selection = self.selection.clone();
-
-        // Cache cell metrics for mouse handlers (approximate until canvas measures)
-        // These get more accurate after first render
-        self.canvas_origin = gpui::point(self.config.padding.left, self.config.padding.top);
-        self.cached_cell_width = self.renderer.cell_width;
-        self.cached_cell_height = self.renderer.cell_height;
+        let metrics_for_canvas = self.cell_metrics.clone();
 
         let bg = self.renderer.palette.resolve(
             alacritty_terminal::vte::ansi::Color::Named(
@@ -1171,6 +1157,17 @@ impl Render for TerminalView {
                                 callback(cols, rows);
                             }
                             term.resize(TermSize { cols, rows });
+                        }
+
+                        // Update cell metrics for mouse coordinate conversion
+                        {
+                            let mut m = metrics_for_canvas.lock();
+                            m.origin = gpui::Point {
+                                x: bounds.origin.x + padding.left,
+                                y: bounds.origin.y + padding.top,
+                            };
+                            m.cell_width = measured_renderer.cell_width;
+                            m.cell_height = measured_renderer.cell_height;
                         }
 
                         // Paint the terminal with measured dimensions

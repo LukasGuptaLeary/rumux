@@ -35,11 +35,10 @@ impl Sidebar {
             state
         });
 
-        // Focus and select all after entity creation
+        // Focus after entity creation
         editor.update(cx, |state, cx| {
             state.focus(window, cx);
         });
-        window.dispatch_keystroke(Keystroke::parse("ctrl-a").expect("valid keystroke"), cx);
 
         let app_state = self.app_state.clone();
         let sub = cx.subscribe(&editor, move |sidebar: &mut Self, editor, event: &InputEvent, cx| {

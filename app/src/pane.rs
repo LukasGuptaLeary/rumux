@@ -149,12 +149,10 @@ impl Pane {
             state
         });
 
-        // Focus and select all text after entity is created
+        // Focus after entity creation
         editor.update(cx, |state, cx| {
             state.focus(window, cx);
         });
-        // Dispatch ctrl-a to select all text in the input
-        window.dispatch_keystroke(Keystroke::parse("ctrl-a").expect("valid keystroke"), cx);
 
         let sub = cx.subscribe(
             &editor,
