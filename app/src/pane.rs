@@ -3,7 +3,6 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::IconName;
 use gpui_component::{Selectable, Sizable};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::tab::{Tab, TabBar};
 use gpui_terminal::TerminalView;
 
 use crate::root_view::{SplitDown, SplitRight, TogglePaneZoom};
@@ -206,27 +205,59 @@ impl Render for Pane {
 
         let mut container = div().size_full().flex().flex_col().track_focus(&self.focus_handle);
 
-        // Terminal tabs using gpui-component TabBar (IS the header)
-        let mut tab_bar = TabBar::new("pane-tabs")
-            .small()
-            .selected_index(self.active_idx)
-            .on_click(cx.listener(|pane, idx: &usize, _window, cx| {
-                pane.activate_terminal(*idx);
-                cx.notify();
-            }));
+        // Header with tabs + action buttons
+        let mut header = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .flex_shrink_0()
+            .h(px(32.0))
+            .bg(rgb(theme::BG_SECONDARY))
+            .border_b_1()
+            .border_color(rgb(theme::BORDER));
 
+        // Tab area
+        let mut tabs_area = div().flex().flex_row().flex_1().overflow_hidden();
         for i in 0..self.terminals.len() {
+            let is_active = i == self.active_idx;
             let is_renaming = self.rename_idx == Some(i);
             let tab_name = self.tab_name(i);
 
-            let is_active = i == self.active_idx;
-            let mut tab = Tab::new()
-                .icon(IconName::SquareTerminal)
-                .selected(is_active);
+            let mut tab = div()
+                .id(ElementId::Name(format!("term-tab-{i}").into()))
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .px(px(10.0))
+                .h_full()
+                .cursor_pointer()
+                .text_size(px(12.0))
+                .border_r_1()
+                .border_color(rgb(theme::BORDER))
+                .on_mouse_down(MouseButton::Left, {
+                    cx.listener(move |pane, event: &MouseDownEvent, window, cx| {
+                        if event.click_count == 2 {
+                            pane.start_rename(i, window, cx);
+                        } else {
+                            pane.activate_terminal(i);
+                        }
+                        cx.notify();
+                    })
+                });
+
+            if is_active {
+                tab = tab
+                    .bg(rgb(theme::BG_PRIMARY))
+                    .text_color(rgb(theme::TEXT_PRIMARY));
+            } else {
+                tab = tab
+                    .text_color(rgb(theme::TEXT_DIM))
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)));
+            }
 
             if is_renaming {
                 if let Some(ref editor) = self.rename_editor {
-                    tab = tab.label("").suffix(
+                    tab = tab.child(
                         Input::new(editor)
                             .appearance(false)
                             .bordered(false)
@@ -234,10 +265,10 @@ impl Render for Pane {
                     );
                 }
             } else {
-                tab = tab.child(div().text_sm().child(tab_name));
+                tab = tab.child(tab_name);
 
                 if self.terminals.len() > 1 {
-                    tab = tab.suffix(
+                    tab = tab.child(
                         Button::new(SharedString::from(format!("close-tab-{i}")))
                             .ghost()
                             .compact()
@@ -250,15 +281,17 @@ impl Render for Pane {
                 }
             }
 
-            tab_bar = tab_bar.child(tab);
+            tabs_area = tabs_area.child(tab);
         }
+        header = header.child(tabs_area);
 
-        // Put action buttons in the TabBar suffix
+        // Action buttons
         let action_buttons = div()
             .flex()
             .items_center()
             .gap(px(2.0))
             .px(px(4.0))
+            .flex_shrink_0()
             .child(
                 Button::new("pane-new-term")
                     .ghost()
@@ -338,9 +371,9 @@ impl Render for Pane {
             );
         }
 
-        tab_bar = tab_bar.suffix(action_buttons);
+        header = header.child(action_buttons);
 
-        container = container.child(tab_bar);
+        container = container.child(header);
         container = container.child(
             div()
                 .flex_1()
