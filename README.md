@@ -61,6 +61,8 @@ Desktop release artifacts:
 
 Those assets ship the current desktop binary in a release-ready archive format. They are not yet native installers, signed bundles, or distro packages.
 
+Current desktop support policy lives in [COMPATIBILITY.md](COMPATIBILITY.md).
+
 ## Usage
 
 | Command | Description |
@@ -119,6 +121,27 @@ rumux includes a pure-Rust desktop application built on GPUI.
 - Command palette, notification panel, and find overlay
 - Ghostty-compatible terminal font configuration
 - Local RPC endpoint for automation and integration
+
+### Desktop RPC
+
+The desktop app exposes a local JSON-RPC endpoint for editor and agent integration.
+
+Examples:
+
+```bash
+rumux capabilities
+rumux rpc workspace.list
+rumux rpc surface.list
+rumux rpc surface.send_text '{"text":"cargo test","append_newline":true}'
+rumux rpc surface.send_key '{"keystroke":"ctrl-c"}'
+```
+
+Current automation model:
+
+- `workspace.*` methods let integrations inspect, create, select, and close workspaces
+- `surface.*` methods operate on the current target terminal by default
+- `surface.*` methods can also target a specific terminal via `surface_index`
+- The RPC contract is intended for local-machine use and is versioned conservatively within a release line, but it is still evolving during `0.1.x`
 
 ### Keyboard Shortcuts
 
@@ -228,6 +251,7 @@ rumux is backward compatible with cmux:
 - [SECURITY.md](SECURITY.md) for vulnerability reporting
 - [SUPPORT.md](SUPPORT.md) for support boundaries and issue routing
 - [RELEASING.md](RELEASING.md) for release steps
+- [COMPATIBILITY.md](COMPATIBILITY.md) for platform support and upgrade guarantees
 - [ROADMAP.md](ROADMAP.md) for current product and release priorities
 - [CLAUDE.md](CLAUDE.md) for the current architecture map and build notes used in this repo
 - [install.sh](install.sh) for the release-based CLI installer

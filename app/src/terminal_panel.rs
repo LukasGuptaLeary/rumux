@@ -60,14 +60,26 @@ impl TerminalPanel {
         self.name = name;
     }
 
-    #[allow(dead_code)]
     pub fn write_to_terminal(&self, bytes: &[u8], cx: &mut App) {
         self.terminal.update(cx, |view, _cx| {
             view.write_to_pty(bytes);
         });
     }
 
-    fn display_name(&self) -> String {
+    pub fn send_keystroke(&self, keystroke: &Keystroke, cx: &mut App) -> bool {
+        self.terminal
+            .update(cx, |view, _cx| view.send_keystroke(keystroke))
+    }
+
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    pub fn cwd(&self) -> Option<&str> {
+        self.cwd.as_deref()
+    }
+
+    pub fn display_name(&self) -> String {
         self.name
             .clone()
             .unwrap_or_else(|| format!("Terminal {}", self.index + 1))

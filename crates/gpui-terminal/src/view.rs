@@ -577,6 +577,19 @@ impl TerminalView {
         let _ = writer.flush();
     }
 
+    /// Send a parsed GPUI keystroke through the terminal input pipeline.
+    ///
+    /// Returns `true` when the keystroke produced terminal bytes and was sent.
+    pub fn send_keystroke(&mut self, keystroke: &Keystroke) -> bool {
+        let Some(bytes) = keystroke_to_bytes(keystroke, self.state.mode()) else {
+            return false;
+        };
+
+        self.clear_selection();
+        self.write_to_pty(&bytes);
+        true
+    }
+
     fn clear_selection(&mut self) {
         self.state.with_term_mut(|term| {
             term.selection = None;

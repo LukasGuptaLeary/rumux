@@ -43,8 +43,8 @@ Supported desktop release assets today:
 
 The desktop packages currently ship:
 
-- Linux: a release tarball with the `rumux-app` binary and a small runtime README
-- macOS: a zipped `rumux.app` bundle suitable for direct download and testing
+- Linux: a release tarball with the `rumux-app` binary, desktop entry metadata, AppStream metadata, and branded icons
+- macOS: a zipped `rumux.app` bundle with branded app resources and icon plumbing suitable for direct download and testing
 
 They do not yet provide native signing, notarization, DMG generation, MSI packaging, or Linux distro-specific packages.
 
@@ -62,6 +62,8 @@ If you need to rebuild assets for an existing draft tag, run the workflow manual
 gh workflow run release-cli.yml -f tag=v0.1.0
 gh workflow run release-desktop.yml -f tag=v0.1.0
 ```
+
+Platform support and persisted-state guarantees are documented in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## 5. Optional Crates.io Publish
 

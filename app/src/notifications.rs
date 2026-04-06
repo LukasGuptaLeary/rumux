@@ -17,6 +17,7 @@ pub struct Notification {
 /// - OSC 9 ; <message> ST  (iTerm2/ConEmu)
 /// - OSC 99 ; <params> ST  (Kitty)
 /// - OSC 777 ; notify ; <title> ; <body> ST  (RXVT/URxvt)
+#[allow(dead_code)]
 pub fn parse_notifications(data: &str) -> Vec<(String, Option<String>, String)> {
     let mut results = Vec::new();
     let mut pos = 0;
@@ -53,6 +54,7 @@ pub fn parse_notifications(data: &str) -> Vec<(String, Option<String>, String)> 
     results
 }
 
+#[allow(dead_code)]
 fn parse_osc_content(content: &str) -> Option<(String, Option<String>, String)> {
     if let Some(rest) = content.strip_prefix("777;notify;") {
         let parts: Vec<&str> = rest.splitn(2, ';').collect();

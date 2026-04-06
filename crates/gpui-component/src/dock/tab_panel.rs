@@ -212,6 +212,11 @@ impl TabPanel {
         self.panels.len()
     }
 
+    /// Return the panels in this tab group.
+    pub fn panels(&self) -> &[Arc<dyn PanelView>] {
+        &self.panels
+    }
+
     pub fn dock_area(&self) -> Option<Entity<DockArea>> {
         self.dock_area.upgrade()
     }

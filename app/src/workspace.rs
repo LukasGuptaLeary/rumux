@@ -6,6 +6,7 @@ use gpui_component::dock::{
     DockArea, DockAreaState, DockEvent, DockItem, DockPlacement, PanelInfo, PanelState, PanelStyle,
     PanelView, TabPanel,
 };
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::session::WorkspaceSession;
@@ -15,6 +16,40 @@ use crate::theme;
 
 pub enum WorkspaceEvent {
     PersistRequested,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SurfaceSummary {
+    pub index: usize,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    pub active_tab: bool,
+    pub target: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceSummary {
+    pub index: usize,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<u32>,
+    pub unread_count: usize,
+    pub active: bool,
+    pub surface_count: usize,
+}
+
+#[derive(Clone)]
+struct SurfaceTarget {
+    tab_panel: Entity<TabPanel>,
+    tab_position: usize,
+    panel: Entity<TerminalPanel>,
+    active_tab: bool,
+    target: bool,
 }
 
 pub struct Workspace {
@@ -251,6 +286,87 @@ impl Workspace {
         }
     }
 
+    pub fn summary(&self, index: usize, active: bool, cx: &App) -> WorkspaceSummary {
+        WorkspaceSummary {
+            index,
+            name: self.name.clone(),
+            cwd: self.cwd.clone(),
+            git_branch: self.git_branch.clone(),
+            color: self.color,
+            unread_count: self.unread_count,
+            active,
+            surface_count: self.list_surfaces(cx).len(),
+        }
+    }
+
+    pub fn list_surfaces(&self, cx: &App) -> Vec<SurfaceSummary> {
+        self.surface_targets(cx)
+            .into_iter()
+            .map(|target| {
+                let panel = target.panel.read(cx);
+                SurfaceSummary {
+                    index: panel.index(),
+                    title: panel.display_name(),
+                    cwd: panel.cwd().map(str::to_string),
+                    active_tab: target.active_tab,
+                    target: target.target,
+                }
+            })
+            .collect()
+    }
+
+    pub fn focus_surface(
+        &mut self,
+        surface_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) = self.resolve_surface_target(surface_index, cx) else {
+            return false;
+        };
+
+        target.tab_panel.update(cx, |tab_panel, cx| {
+            tab_panel.set_active_index(target.tab_position, window, cx);
+        });
+        target.panel.read(cx).focus_handle(cx).focus(window);
+        true
+    }
+
+    pub fn send_text_to_surface(
+        &self,
+        surface_index: Option<usize>,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self
+            .resolve_surface_target(surface_index, cx)
+            .map(|target| target.panel)
+        else {
+            return false;
+        };
+
+        panel.update(cx, |panel, cx| {
+            panel.write_to_terminal(text.as_bytes(), &mut **cx);
+        });
+        true
+    }
+
+    pub fn send_keystroke_to_surface(
+        &self,
+        surface_index: Option<usize>,
+        keystroke: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self
+            .resolve_surface_target(surface_index, cx)
+            .map(|target| target.panel)
+        else {
+            return false;
+        };
+
+        panel.update(cx, |panel, cx| panel.send_keystroke(keystroke, &mut **cx))
+    }
+
     #[allow(dead_code)]
     pub fn write_to_target_terminal(&self, text: &str, cx: &mut App) {
         if let Some(panel) = self.target_terminal_panel(cx) {
@@ -269,6 +385,55 @@ impl Workspace {
         let tab_panel = self.target_tab_panel(None, cx)?;
         let active_panel = tab_panel.read(cx).active_panel(cx)?;
         Some(Entity::<TerminalPanel>::from(active_panel.as_ref()))
+    }
+
+    fn resolve_surface_target(
+        &self,
+        surface_index: Option<usize>,
+        cx: &App,
+    ) -> Option<SurfaceTarget> {
+        let targets = self.surface_targets(cx);
+        match surface_index {
+            Some(index) => targets
+                .into_iter()
+                .find(|target| target.panel.read(cx).index() == index),
+            None => targets.into_iter().find(|target| target.target),
+        }
+    }
+
+    fn surface_targets(&self, cx: &App) -> Vec<SurfaceTarget> {
+        let target_panel_id = self
+            .target_terminal_panel(cx)
+            .map(|panel| panel.entity_id());
+        let tab_panels = self.dock_area.read(cx).items().all_tab_panels(cx);
+        let mut result = Vec::new();
+
+        for tab_panel in tab_panels {
+            let (active_index, panels) = {
+                let tab_panel_ref = tab_panel.read(cx);
+                (
+                    tab_panel_ref.active_index(),
+                    tab_panel_ref.panels().to_vec(),
+                )
+            };
+
+            for (tab_position, panel_view) in panels.into_iter().enumerate() {
+                if panel_view.panel_name(cx) != "TerminalPanel" {
+                    continue;
+                }
+
+                let panel = Entity::<TerminalPanel>::from(panel_view.as_ref());
+                result.push(SurfaceTarget {
+                    tab_panel: tab_panel.clone(),
+                    tab_position,
+                    active_tab: tab_position == active_index,
+                    target: Some(panel.entity_id()) == target_panel_id,
+                    panel,
+                });
+            }
+        }
+
+        result
     }
 
     fn current_next_terminal_index(&self, cx: &App) -> usize {

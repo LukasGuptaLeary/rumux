@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.lukasguptaleary.rumux</id>
+  <name>rumux</name>
+  <summary>Native terminal workspace manager for parallel development sessions</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.lukasguptaleary">
+    <name>Lukas Gupta Leary</name>
+  </developer>
+  <description>
+    <p>
+      rumux combines git worktree lifecycle management with a GPUI-based desktop shell
+      for docked terminals, split panes, workspace switching, and session restore.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.lukasguptaleary.rumux.desktop</launchable>
+  <categories>
+    <category>Development</category>
+    <category>Utility</category>
+    <category>TerminalEmulator</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+</component>

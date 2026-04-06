@@ -4,7 +4,7 @@ use crate::config::RumuxConfig;
 use crate::notifications::Notification;
 use crate::session;
 use crate::theme;
-use crate::workspace::{Workspace, WorkspaceEvent};
+use crate::workspace::{Workspace, WorkspaceEvent, WorkspaceSummary};
 
 pub struct AppState {
     pub workspaces: Vec<Entity<Workspace>>,
@@ -132,6 +132,86 @@ impl AppState {
             .collect();
         let data = session::SessionData::new(workspaces, self.active_workspace_idx);
         let _ = session::save_session(&data);
+    }
+
+    pub fn workspace_summaries(&self, cx: &App) -> Vec<WorkspaceSummary> {
+        self.workspaces
+            .iter()
+            .enumerate()
+            .map(|(index, workspace)| {
+                workspace
+                    .read(cx)
+                    .summary(index, index == self.active_workspace_idx, cx)
+            })
+            .collect()
+    }
+
+    pub fn workspace_index_by_name(&self, name: &str, cx: &App) -> Option<usize> {
+        self.workspaces
+            .iter()
+            .position(|workspace| workspace.read(cx).name == name)
+    }
+
+    pub fn add_workspace_named(
+        &mut self,
+        name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| format!("Workspace {}", self.workspaces.len() + 1));
+        let ws = self.new_workspace_entity(name, window, cx);
+        self.workspaces.push(ws);
+        self.active_workspace_idx = self.workspaces.len() - 1;
+        cx.notify();
+        self.save_session(cx);
+        self.focus_active_workspace(window, cx);
+    }
+
+    pub fn create_notification(
+        &mut self,
+        title: String,
+        subtitle: Option<String>,
+        body: String,
+        workspace_id: usize,
+        cx: &mut Context<Self>,
+    ) -> Notification {
+        let notification = Notification {
+            id: uuid::Uuid::new_v4().to_string(),
+            workspace_id,
+            title,
+            subtitle,
+            body,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or_default(),
+            read: false,
+        };
+
+        self.notifications.push(notification.clone());
+
+        if let Some(workspace) = self.workspaces.get(workspace_id) {
+            workspace.update(cx, |workspace, cx| {
+                workspace.unread_count += 1;
+                cx.notify();
+            });
+        }
+
+        cx.notify();
+        notification
+    }
+
+    pub fn clear_notifications(&mut self, cx: &mut Context<Self>) {
+        self.notifications.clear();
+        for workspace in &self.workspaces {
+            workspace.update(cx, |workspace, cx| {
+                workspace.unread_count = 0;
+                cx.notify();
+            });
+        }
+        cx.notify();
     }
 
     #[allow(dead_code)]

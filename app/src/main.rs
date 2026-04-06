@@ -66,15 +66,6 @@ fn main() {
             KeyBinding::new("cmd-q", QuitApp, None),
         ]);
 
-        // Start socket server in background
-        cx.spawn(async |_cx: &mut AsyncApp| {
-            if let Err(e) = socket_server::start_socket_server().await {
-                eprintln!("Socket server error: {e}");
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .detach();
-
         cx.spawn(async move |cx: &mut AsyncApp| {
             let app_state = cx.new(|cx| AppState::new(&mut *cx))?;
 
@@ -93,6 +84,17 @@ fn main() {
                     cx.new(|cx| gpui_component::Root::new(root_view, window, cx))
                 },
             )?;
+
+            let socket_state = app_state.downgrade();
+            cx.spawn(async move |cx: &mut AsyncApp| {
+                if let Err(error) =
+                    socket_server::start_socket_server(socket_state.clone(), cx).await
+                {
+                    eprintln!("Socket server error: {error}");
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .detach();
 
             // Git branch polling task (every 3 seconds)
             let state_for_git = app_state.downgrade();
