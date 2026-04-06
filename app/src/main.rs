@@ -5,6 +5,7 @@ mod command_palette;
 mod config;
 mod custom_commands;
 mod find_bar;
+mod instance;
 mod notification_panel;
 mod notifications;
 mod root_view;
@@ -22,6 +23,17 @@ use app_state::AppState;
 use root_view::*;
 
 fn main() {
+    const APP_ID: &str = "io.github.lukasguptaleary.rumux";
+
+    let _instance_guard = match instance::acquire_or_activate_existing() {
+        Ok(Some(guard)) => guard,
+        Ok(None) => return,
+        Err(error) => {
+            eprintln!("Failed to start rumux: {error}");
+            std::process::exit(1);
+        }
+    };
+
     let app = Application::new().with_assets(gpui_component_assets::Assets);
 
     app.run(move |cx| {
@@ -69,8 +81,9 @@ fn main() {
         cx.spawn(async move |cx: &mut AsyncApp| {
             let app_state = cx.new(|cx| AppState::new(&mut *cx))?;
 
-            cx.open_window(
+            let main_window = cx.open_window(
                 WindowOptions {
+                    app_id: Some(APP_ID.into()),
                     titlebar: Some(TitlebarOptions {
                         title: Some("rumux".into()),
                         ..Default::default()
@@ -84,6 +97,10 @@ fn main() {
                     cx.new(|cx| gpui_component::Root::new(root_view, window, cx))
                 },
             )?;
+
+            app_state.update(cx, |state, _cx| {
+                state.set_primary_window(main_window.into());
+            })?;
 
             let socket_state = app_state.downgrade();
             cx.spawn(async move |cx: &mut AsyncApp| {

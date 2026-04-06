@@ -12,6 +12,7 @@ pub struct AppState {
     pub config: RumuxConfig,
     pub notifications: Vec<Notification>,
     pub default_cwd: std::path::PathBuf,
+    primary_window: Option<AnyWindowHandle>,
     workspace_subscriptions: Vec<Subscription>,
 }
 
@@ -27,6 +28,7 @@ impl AppState {
             config,
             notifications: Vec::new(),
             default_cwd,
+            primary_window: None,
             workspace_subscriptions: Vec::new(),
         }
     }
@@ -96,9 +98,23 @@ impl AppState {
     }
 
     pub fn duplicate_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let idx = self.active_workspace_idx;
+        let _ = self.duplicate_workspace_at(idx, window, cx);
+    }
+
+    pub fn duplicate_workspace_at(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        if idx >= self.workspaces.len() {
+            return None;
+        }
+
         let mut snapshot = {
-            let current = self.active_workspace().read(cx);
-            current.to_session(cx)
+            let workspace = self.workspaces[idx].read(cx);
+            workspace.to_session(cx)
         };
         snapshot.name = format!("{} (copy)", snapshot.name);
 
@@ -109,6 +125,7 @@ impl AppState {
         cx.notify();
         self.save_session(cx);
         self.focus_active_workspace(window, cx);
+        Some(self.active_workspace_idx)
     }
 
     pub fn rename_workspace(&mut self, idx: usize, name: String, cx: &mut Context<Self>) {
@@ -214,6 +231,21 @@ impl AppState {
         cx.notify();
     }
 
+    pub fn set_primary_window(&mut self, window: AnyWindowHandle) {
+        self.primary_window = Some(window);
+    }
+
+    pub fn primary_window(&self) -> Option<AnyWindowHandle> {
+        self.primary_window
+    }
+
+    pub fn focus_active_workspace(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.active_workspace().clone();
+        workspace.update(cx, |workspace, cx| {
+            workspace.focus_target(window, &mut **cx);
+        });
+    }
+
     #[allow(dead_code)]
     pub fn write_to_target_terminal(&self, text: &str, cx: &mut Context<Self>) {
         let workspace = self.active_workspace().clone();
@@ -272,12 +304,5 @@ impl AppState {
 
     fn workspace_color(index: usize) -> u32 {
         theme::WORKSPACE_COLORS[index % theme::WORKSPACE_COLORS.len()]
-    }
-
-    fn focus_active_workspace(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let workspace = self.active_workspace().clone();
-        workspace.update(cx, |workspace, cx| {
-            workspace.focus_target(window, &mut **cx);
-        });
     }
 }

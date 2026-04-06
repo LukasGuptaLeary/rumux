@@ -43,6 +43,12 @@ pub struct WorkspaceSummary {
     pub surface_count: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum SurfaceReadScope {
+    Buffer,
+    Visible,
+}
+
 #[derive(Clone)]
 struct SurfaceTarget {
     tab_panel: Entity<TabPanel>,
@@ -189,12 +195,9 @@ impl Workspace {
     }
 
     pub fn add_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let cwd_path = self.cwd.as_deref().map(std::path::Path::new);
-        let index = self.current_next_terminal_index(cx);
-        self.next_terminal_index = index + 1;
-
-        let panel = Self::create_terminal_panel(cwd_path, index, cx);
-        let panel_view: Arc<dyn PanelView> = Arc::new(panel);
+        let cwd = self.cwd.clone();
+        let (_, _, panel_view) =
+            self.new_terminal_panel_view(cwd.as_deref().map(std::path::Path::new), cx);
 
         if let Some(target_tp) = self.target_tab_panel(Some(window), cx) {
             target_tp.update(cx, |tp, cx| {
@@ -210,12 +213,9 @@ impl Workspace {
     }
 
     pub fn split(&mut self, placement: Placement, window: &mut Window, cx: &mut Context<Self>) {
-        let cwd_path = self.cwd.as_deref().map(std::path::Path::new);
-        let index = self.current_next_terminal_index(cx);
-        self.next_terminal_index = index + 1;
-
-        let panel = Self::create_terminal_panel(cwd_path, index, cx);
-        let panel_view: Arc<dyn PanelView> = Arc::new(panel);
+        let cwd = self.cwd.clone();
+        let (_, _, panel_view) =
+            self.new_terminal_panel_view(cwd.as_deref().map(std::path::Path::new), cx);
 
         if let Some(target_tp) = self.target_tab_panel(Some(window), cx) {
             target_tp.update(cx, |tp, cx| {
@@ -376,6 +376,285 @@ impl Workspace {
         }
     }
 
+    pub fn add_terminal_to_surface(
+        &mut self,
+        surface_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let target = self.resolve_surface_target(surface_index, cx);
+        let cwd = target
+            .as_ref()
+            .and_then(|target| target.panel.read(cx).cwd().map(str::to_string))
+            .or_else(|| self.cwd.clone());
+        let (index, _, panel_view) =
+            self.new_terminal_panel_view(cwd.as_deref().map(std::path::Path::new), cx);
+
+        if let Some(target) = target {
+            target.tab_panel.update(cx, |tab_panel, cx| {
+                if tab_panel.active_index() != target.tab_position {
+                    tab_panel.set_active_index(target.tab_position, window, cx);
+                }
+                tab_panel.add_panel(panel_view, window, cx);
+            });
+        } else if surface_index.is_none() {
+            if let Some(target_tab_panel) = self.target_tab_panel(Some(window), cx) {
+                target_tab_panel.update(cx, |tab_panel, cx| {
+                    tab_panel.add_panel(panel_view, window, cx);
+                });
+            } else {
+                self.dock_area.update(cx, |area, cx| {
+                    area.add_panel(panel_view, DockPlacement::Center, None, window, cx);
+                });
+            }
+        } else {
+            return None;
+        }
+
+        cx.notify();
+        Some(index)
+    }
+
+    pub fn split_surface(
+        &mut self,
+        surface_index: Option<usize>,
+        placement: Placement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let target = self.resolve_surface_target(surface_index, cx);
+        let cwd = target
+            .as_ref()
+            .and_then(|target| target.panel.read(cx).cwd().map(str::to_string))
+            .or_else(|| self.cwd.clone());
+
+        if let Some(target) = target {
+            let (index, panel, _panel_view) =
+                self.new_terminal_panel_view(cwd.as_deref().map(std::path::Path::new), cx);
+            let dock_area = self.dock_area.downgrade();
+            let new_item = DockItem::tab(panel, &dock_area, window, &mut **cx);
+            let new_target_tab_panel = match &new_item {
+                DockItem::Tabs { view, .. } => view.downgrade(),
+                _ => return None,
+            };
+            let current = self.dock_area.read(cx).items().clone();
+            let split = split_dock_item(
+                current,
+                target.tab_panel.entity_id(),
+                new_item,
+                placement,
+                &dock_area,
+                window,
+                &mut **cx,
+            )?;
+
+            self.dock_area.update(cx, |dock_area, cx| {
+                dock_area.set_center(split, window, cx);
+                dock_area.remember_tab_panel(new_target_tab_panel);
+            });
+            cx.notify();
+            Some(index)
+        } else if surface_index.is_none() {
+            let index = self.current_next_terminal_index(cx);
+            self.split(placement, window, cx);
+            Some(index)
+        } else {
+            None
+        }
+    }
+
+    pub fn close_surface(
+        &mut self,
+        surface_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) = self.resolve_surface_target(surface_index, cx) else {
+            return false;
+        };
+
+        let panel_view: Arc<dyn PanelView> = Arc::new(target.panel);
+        target.tab_panel.update(cx, |tab_panel, cx| {
+            tab_panel.remove_panel(panel_view, window, cx);
+        });
+        cx.notify();
+        true
+    }
+
+    pub fn rename_surface(
+        &mut self,
+        surface_index: Option<usize>,
+        name: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self
+            .resolve_surface_target(surface_index, cx)
+            .map(|target| target.panel)
+        else {
+            return false;
+        };
+
+        let name = name
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
+        panel.update(cx, |panel, cx| {
+            panel.rename(name, cx);
+        });
+        cx.emit(WorkspaceEvent::PersistRequested);
+        true
+    }
+
+    pub fn next_surface(
+        &mut self,
+        surface_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) = self.resolve_surface_target(surface_index, cx) else {
+            return false;
+        };
+
+        target.tab_panel.update(cx, |tab_panel, cx| {
+            if tab_panel.active_index() != target.tab_position {
+                tab_panel.set_active_index(target.tab_position, window, cx);
+            }
+            tab_panel.next_tab(window, cx);
+        });
+        true
+    }
+
+    pub fn prev_surface(
+        &mut self,
+        surface_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) = self.resolve_surface_target(surface_index, cx) else {
+            return false;
+        };
+
+        target.tab_panel.update(cx, |tab_panel, cx| {
+            if tab_panel.active_index() != target.tab_position {
+                tab_panel.set_active_index(target.tab_position, window, cx);
+            }
+            tab_panel.prev_tab(window, cx);
+        });
+        true
+    }
+
+    pub fn toggle_zoom_surface(
+        &mut self,
+        surface_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<bool> {
+        let target = self.resolve_surface_target(surface_index, cx)?;
+        let is_zoomed = self.dock_area.read(cx).is_zoomed();
+
+        target.tab_panel.update(cx, |tab_panel, cx| {
+            if tab_panel.active_index() != target.tab_position {
+                tab_panel.set_active_index(target.tab_position, window, cx);
+            }
+        });
+
+        if is_zoomed {
+            self.dock_area.update(cx, |dock_area, cx| {
+                dock_area.set_zoomed_out(window, cx);
+            });
+        } else {
+            self.dock_area.update(cx, |dock_area, cx| {
+                dock_area.set_zoomed_in(target.tab_panel, window, cx);
+            });
+        }
+
+        cx.notify();
+        Some(!is_zoomed)
+    }
+
+    pub fn select_all_in_surface(
+        &self,
+        surface_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self
+            .resolve_surface_target(surface_index, cx)
+            .map(|target| target.panel)
+        else {
+            return false;
+        };
+
+        panel.update(cx, |panel, cx| {
+            panel.select_all(cx);
+        });
+        true
+    }
+
+    pub fn copy_selection_from_surface(
+        &self,
+        surface_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self
+            .resolve_surface_target(surface_index, cx)
+            .map(|target| target.panel)
+        else {
+            return false;
+        };
+
+        panel.update(cx, |panel, cx| {
+            panel.copy_selection(cx);
+        });
+        true
+    }
+
+    pub fn copy_all_from_surface(
+        &self,
+        surface_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self
+            .resolve_surface_target(surface_index, cx)
+            .map(|target| target.panel)
+        else {
+            return false;
+        };
+
+        panel.update(cx, |panel, cx| {
+            panel.copy_all(cx);
+        });
+        true
+    }
+
+    pub fn paste_into_surface(&self, surface_index: Option<usize>, cx: &mut Context<Self>) -> bool {
+        let Some(panel) = self
+            .resolve_surface_target(surface_index, cx)
+            .map(|target| target.panel)
+        else {
+            return false;
+        };
+
+        panel.update(cx, |panel, cx| {
+            panel.paste_from_system_clipboard(cx);
+        });
+        true
+    }
+
+    pub fn read_surface_text(
+        &self,
+        surface_index: Option<usize>,
+        scope: SurfaceReadScope,
+        cx: &App,
+    ) -> Option<String> {
+        let panel = self
+            .resolve_surface_target(surface_index, cx)
+            .map(|target| target.panel)?;
+
+        Some(match scope {
+            SurfaceReadScope::Buffer => panel.read(cx).buffer_text(cx),
+            SurfaceReadScope::Visible => panel.read(cx).visible_text(cx),
+        })
+    }
+
     fn target_tab_panel(&self, window: Option<&Window>, cx: &App) -> Option<Entity<TabPanel>> {
         self.dock_area.read(cx).target_tab_panel(window, cx)
     }
@@ -439,6 +718,19 @@ impl Workspace {
     fn current_next_terminal_index(&self, cx: &App) -> usize {
         next_terminal_index_from_state(Some(&self.dock_area.read(cx).dump(cx)))
     }
+
+    fn new_terminal_panel_view(
+        &mut self,
+        cwd: Option<&std::path::Path>,
+        cx: &mut Context<Self>,
+    ) -> (usize, Entity<TerminalPanel>, Arc<dyn PanelView>) {
+        let index = self.current_next_terminal_index(cx);
+        self.next_terminal_index = index + 1;
+
+        let panel = Self::create_terminal_panel(cwd, index, cx);
+        let panel_view: Arc<dyn PanelView> = Arc::new(panel.clone());
+        (index, panel, panel_view)
+    }
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -478,4 +770,93 @@ fn max_terminal_index(state: &PanelState) -> Option<usize> {
     }
 
     max_index
+}
+
+fn split_dock_item(
+    item: DockItem,
+    target_tab_panel_id: EntityId,
+    new_item: DockItem,
+    placement: Placement,
+    dock_area: &WeakEntity<DockArea>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<DockItem> {
+    match item {
+        DockItem::Tabs {
+            size,
+            items,
+            active_ix,
+            view,
+        } => {
+            if view.entity_id() != target_tab_panel_id {
+                return None;
+            }
+
+            let current_item = DockItem::Tabs {
+                size,
+                items,
+                active_ix,
+                view,
+            };
+            let split = match placement {
+                Placement::Left => {
+                    DockItem::h_split(vec![new_item, current_item], dock_area, window, cx)
+                }
+                Placement::Right => {
+                    DockItem::h_split(vec![current_item, new_item], dock_area, window, cx)
+                }
+                Placement::Top => {
+                    DockItem::v_split(vec![new_item, current_item], dock_area, window, cx)
+                }
+                Placement::Bottom => {
+                    DockItem::v_split(vec![current_item, new_item], dock_area, window, cx)
+                }
+            };
+            Some(match size {
+                Some(size) => split.size(size),
+                None => split,
+            })
+        }
+        DockItem::Split {
+            axis,
+            size,
+            items,
+            sizes,
+            ..
+        } => {
+            let mut replaced = false;
+            let mut new_items = Vec::with_capacity(items.len());
+
+            for child in items {
+                if !replaced {
+                    if let Some(split_child) = split_dock_item(
+                        child.clone(),
+                        target_tab_panel_id,
+                        new_item.clone(),
+                        placement,
+                        dock_area,
+                        window,
+                        cx,
+                    ) {
+                        new_items.push(split_child);
+                        replaced = true;
+                        continue;
+                    }
+                }
+
+                new_items.push(child);
+            }
+
+            if !replaced {
+                return None;
+            }
+
+            let split = DockItem::split_with_sizes(axis, new_items, sizes, dock_area, window, cx);
+            Some(match size {
+                Some(size) => split.size(size),
+                None => split,
+            })
+        }
+        DockItem::Panel { .. } | DockItem::Tiles { .. } => None,
+    }
 }

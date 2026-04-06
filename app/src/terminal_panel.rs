@@ -60,6 +60,13 @@ impl TerminalPanel {
         self.name = name;
     }
 
+    pub fn rename(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        self.name = name;
+        self.rename_editor = None;
+        self.rename_subscription = None;
+        cx.notify();
+    }
+
     pub fn write_to_terminal(&self, bytes: &[u8], cx: &mut App) {
         self.terminal.update(cx, |view, _cx| {
             view.write_to_pty(bytes);
@@ -69,6 +76,38 @@ impl TerminalPanel {
     pub fn send_keystroke(&self, keystroke: &Keystroke, cx: &mut App) -> bool {
         self.terminal
             .update(cx, |view, _cx| view.send_keystroke(keystroke))
+    }
+
+    pub fn copy_selection(&self, cx: &mut Context<Self>) {
+        self.terminal.update(cx, |view, cx| {
+            view.copy_selection(cx);
+        });
+    }
+
+    pub fn select_all(&self, cx: &mut Context<Self>) {
+        self.terminal.update(cx, |view, cx| {
+            view.select_all(cx);
+        });
+    }
+
+    pub fn copy_all(&self, cx: &mut Context<Self>) {
+        self.terminal.update(cx, |view, cx| {
+            view.copy_all(cx);
+        });
+    }
+
+    pub fn paste_from_system_clipboard(&self, cx: &mut Context<Self>) {
+        self.terminal.update(cx, |view, cx| {
+            view.paste_from_system_clipboard(cx);
+        });
+    }
+
+    pub fn buffer_text(&self, cx: &App) -> String {
+        self.terminal.read(cx).buffer_text()
+    }
+
+    pub fn visible_text(&self, cx: &App) -> String {
+        self.terminal.read(cx).visible_text()
     }
 
     pub fn index(&self) -> usize {
@@ -129,10 +168,7 @@ impl TerminalPanel {
     }
 
     fn finish_rename(&mut self, name: Option<String>, cx: &mut Context<Self>) {
-        self.name = name;
-        self.rename_editor = None;
-        self.rename_subscription = None;
-        cx.notify();
+        self.rename(name, cx);
     }
 
     fn split_or_add(

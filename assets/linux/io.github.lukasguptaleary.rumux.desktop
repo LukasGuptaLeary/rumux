@@ -8,4 +8,4 @@ Icon=io.github.lukasguptaleary.rumux
 Terminal=false
 Categories=Development;System;Utility;
 StartupNotify=true
-StartupWMClass=rumux
+StartupWMClass=io.github.lukasguptaleary.rumux

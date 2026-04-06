@@ -47,6 +47,13 @@ Expectations:
 - Documented and advertised methods should keep their core behavior stable within a patch release.
 - New fields may be added to JSON responses without being considered a breaking change.
 - Method removal or semantic changes should be called out in the changelog and release notes.
+- The `rumux mcp` bridge is a compatibility layer over this same local RPC contract, not a separate control plane.
+
+## Desktop Instance Model
+
+- `rumux-app` is intended to run as a single desktop instance per user-scoped IPC endpoint.
+- A second launch should activate the already-running instance and exit instead of opening a parallel shell window.
+- Alternate endpoints configured with `RUMUX_SOCKET_ADDR`, `RUMUX_SOCKET_PATH`, or `RUMUX_RUNTIME_DIR` are treated as separate instances for development and testing.
 
 ## Release and Support Policy
 

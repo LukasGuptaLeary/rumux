@@ -115,6 +115,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Run a stdio MCP server that controls a running rumux desktop app
+    Mcp,
 }
 
 fn main() {
@@ -151,6 +153,7 @@ fn main() {
             ref params,
             json,
         } => commands::socket_client::run_raw(method, params, json),
+        Commands::Mcp => commands::mcp::run(),
     };
 
     if let Err(e) = result {

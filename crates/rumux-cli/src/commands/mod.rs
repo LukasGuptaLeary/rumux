@@ -2,6 +2,7 @@ pub mod cd;
 pub mod completions;
 pub mod init;
 pub mod ls;
+pub mod mcp;
 pub mod merge;
 pub mod new;
 pub mod rm;

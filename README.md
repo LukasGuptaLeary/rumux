@@ -14,6 +14,7 @@ The desktop shell follows the same architectural direction as Zed: pure Rust, GP
 - Docked tabs, split panes, zoom, and multi-workspace sidebar
 - Restorable workspace layout and terminal launch directories
 - Local RPC endpoint for automation and editor or agent integration
+- MCP bridge for agent control over the running desktop app
 - Backward compatibility with existing cmux `.worktrees/` layouts and setup hooks
 
 ## Install
@@ -77,6 +78,7 @@ Current desktop support policy lives in [COMPATIBILITY.md](COMPATIBILITY.md).
 | `rumux update` | Show update instructions |
 | `rumux version` | Print version |
 | `rumux completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
+| `rumux mcp` | Run a stdio MCP server for a running `rumux-app` instance |
 
 ## Typical Workflow
 
@@ -112,6 +114,7 @@ rumux includes a pure-Rust desktop application built on GPUI.
 - **Terminal runtime:** `portable-pty` + `alacritty_terminal` + `gpui-terminal`
 - **Persistence:** workspaces restore dock layout and terminal launch directories across restarts.
 - **IPC:** Unix domain sockets on Unix by default, loopback TCP on non-Unix. Override with `RUMUX_SOCKET_PATH` or `RUMUX_SOCKET_ADDR`.
+- **Instance model:** one desktop app instance per user-scoped IPC endpoint. A second launch activates the primary instance and exits.
 
 ### Features
 
@@ -121,6 +124,7 @@ rumux includes a pure-Rust desktop application built on GPUI.
 - Command palette, notification panel, and find overlay
 - Ghostty-compatible terminal font configuration
 - Local RPC endpoint for automation and integration
+- Single-instance desktop app with launch handoff to the running window
 
 ### Desktop RPC
 
@@ -130,6 +134,7 @@ Examples:
 
 ```bash
 rumux capabilities
+rumux rpc system.activate
 rumux rpc workspace.list
 rumux rpc surface.list
 rumux rpc surface.send_text '{"text":"cargo test","append_newline":true}'
@@ -141,7 +146,22 @@ Current automation model:
 - `workspace.*` methods let integrations inspect, create, select, and close workspaces
 - `surface.*` methods operate on the current target terminal by default
 - `surface.*` methods can also target a specific terminal via `surface_index`
+- `system.activate` raises the primary desktop window, which is also what a second app launch uses for handoff
 - The RPC contract is intended for local-machine use and is versioned conservatively within a release line, but it is still evolving during `0.1.x`
+
+### MCP Integration
+
+The CLI can expose the running desktop app as a stdio MCP server:
+
+```bash
+rumux mcp
+```
+
+The MCP bridge is intentionally thin:
+
+- It exposes typed MCP tools for the current desktop RPC surface
+- It includes an `rpc_raw` tool as an escape hatch for advanced integrations
+- It controls the already-running `rumux-app`; it does not spin up a second desktop instance
 
 ### Keyboard Shortcuts
 

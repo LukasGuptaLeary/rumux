@@ -738,6 +738,25 @@ impl TerminalView {
         self.paste_from_clipboard(cx);
     }
 
+    /// Read the full terminal buffer, including scrollback.
+    pub fn buffer_text(&self) -> String {
+        self.state.with_term(|term| {
+            let start = AlacPoint::new(term.topmost_line(), Column(0));
+            let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+            term.bounds_to_string(start, end)
+        })
+    }
+
+    /// Read only the currently visible terminal screen contents.
+    pub fn visible_text(&self) -> String {
+        self.state.with_term(|term| {
+            let last_line = term.screen_lines().saturating_sub(1) as i32;
+            let start = AlacPoint::new(Line(0), Column(0));
+            let end = AlacPoint::new(Line(last_line.max(0)), term.last_column());
+            term.bounds_to_string(start, end)
+        })
+    }
+
     fn is_copy_shortcut(keystroke: &Keystroke) -> bool {
         #[cfg(target_os = "macos")]
         {

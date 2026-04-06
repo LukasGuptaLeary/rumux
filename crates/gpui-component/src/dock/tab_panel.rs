@@ -20,8 +20,8 @@ use crate::{
 };
 
 use super::{
-    ClosePanel, DockArea, DockPlacement, Panel, PanelControl, PanelEvent, PanelState, PanelStyle,
-    PanelView, StackPanel, ToggleZoom,
+    ClosePanel, DockArea, DockItem, DockPlacement, Panel, PanelControl, PanelEvent, PanelState,
+    PanelStyle, PanelView, StackPanel, ToggleZoom,
 };
 
 #[derive(Clone)]
@@ -1080,7 +1080,64 @@ impl TabPanel {
 
         let stack_panel = match self.stack_panel.as_ref().and_then(|panel| panel.upgrade()) {
             Some(panel) => panel,
-            None => return,
+            None => {
+                let Some(dock_area) = self.dock_area.upgrade() else {
+                    return;
+                };
+
+                let tab_panel = cx.entity().clone();
+                let current_item = DockItem::Tabs {
+                    size: None,
+                    items: self.panels.clone(),
+                    active_ix: self.active_ix,
+                    view: tab_panel,
+                };
+                let new_item = DockItem::Tabs {
+                    size: None,
+                    items: new_tab_panel.read(cx).panels.clone(),
+                    active_ix: new_tab_panel.read(cx).active_index(),
+                    view: new_tab_panel.clone(),
+                };
+
+                let split = match placement {
+                    Placement::Left | Placement::Right => match placement {
+                        Placement::Left => DockItem::h_split(
+                            vec![new_item, current_item],
+                            &dock_area.downgrade(),
+                            window,
+                            cx,
+                        ),
+                        Placement::Right => DockItem::h_split(
+                            vec![current_item, new_item],
+                            &dock_area.downgrade(),
+                            window,
+                            cx,
+                        ),
+                        _ => unreachable!(),
+                    },
+                    Placement::Top | Placement::Bottom => match placement {
+                        Placement::Top => DockItem::v_split(
+                            vec![new_item, current_item],
+                            &dock_area.downgrade(),
+                            window,
+                            cx,
+                        ),
+                        Placement::Bottom => DockItem::v_split(
+                            vec![current_item, new_item],
+                            &dock_area.downgrade(),
+                            window,
+                            cx,
+                        ),
+                        _ => unreachable!(),
+                    },
+                };
+
+                dock_area.update(cx, |dock_area, cx| {
+                    dock_area.set_center(split, window, cx);
+                    dock_area.remember_tab_panel(new_tab_panel.downgrade());
+                });
+                return;
+            }
         };
 
         let parent_axis = stack_panel.read(cx).axis;
