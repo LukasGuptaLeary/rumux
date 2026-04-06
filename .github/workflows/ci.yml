@@ -38,10 +38,20 @@ jobs:
       - run: cargo test -p rumux-core -p rumux-cli
 
   desktop-app:
-    name: Desktop App Check
+    name: Desktop App Check (macOS)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p rumux-app
+
+  desktop-package:
+    name: Desktop Package Smoke Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: bash -n scripts/package-desktop.sh
+      - run: ./scripts/package-desktop.sh

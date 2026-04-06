@@ -53,6 +53,14 @@ cargo run -p rumux-app
 
 On Linux, expect to need the usual development headers for Wayland and/or X11, `xkbcommon`, `fontconfig`, and `dbus` before building the desktop app.
 
+Desktop release artifacts:
+
+- `rumux-desktop-x86_64-unknown-linux-gnu.tar.gz`
+- `rumux-desktop-aarch64-apple-darwin.zip`
+- `rumux-desktop-checksums.txt`
+
+Those assets ship the current desktop binary in a release-ready archive format. They are not yet native installers, signed bundles, or distro packages.
+
 ## Usage
 
 | Command | Description |
@@ -220,8 +228,10 @@ rumux is backward compatible with cmux:
 - [SECURITY.md](SECURITY.md) for vulnerability reporting
 - [SUPPORT.md](SUPPORT.md) for support boundaries and issue routing
 - [RELEASING.md](RELEASING.md) for release steps
+- [ROADMAP.md](ROADMAP.md) for current product and release priorities
 - [CLAUDE.md](CLAUDE.md) for the current architecture map and build notes used in this repo
 - [install.sh](install.sh) for the release-based CLI installer
+- [.github/workflows/release-desktop.yml](.github/workflows/release-desktop.yml) and [scripts/package-desktop.sh](scripts/package-desktop.sh) for desktop release packaging
 
 ## License
 

@@ -33,19 +33,34 @@ Supported release assets today:
 
 The installer script at [install.sh](install.sh) consumes those assets directly from GitHub Releases.
 
-Desktop app artifacts are still a separate manual packaging task.
+Desktop app artifacts are built and uploaded by GitHub Actions in `.github/workflows/release-desktop.yml`.
+
+Supported desktop release assets today:
+
+- `rumux-desktop-x86_64-unknown-linux-gnu.tar.gz`
+- `rumux-desktop-aarch64-apple-darwin.zip`
+- `rumux-desktop-checksums.txt`
+
+The desktop packages currently ship:
+
+- Linux: a release tarball with the `rumux-app` binary and a small runtime README
+- macOS: a zipped `rumux.app` bundle suitable for direct download and testing
+
+They do not yet provide native signing, notarization, DMG generation, MSI packaging, or Linux distro-specific packages.
 
 ## 4. Tag and Publish
 
 - Create a git tag like `v0.1.0`
 - Push the tag
 - Let the `Release CLI` workflow attach CLI binaries and checksums to the draft release
+- Let the `Release Desktop` workflow attach desktop artifacts and checksums to the same draft release
 - Review release notes, then publish the draft release
 
 If you need to rebuild assets for an existing draft tag, run the workflow manually:
 
 ```bash
 gh workflow run release-cli.yml -f tag=v0.1.0
+gh workflow run release-desktop.yml -f tag=v0.1.0
 ```
 
 ## 5. Optional Crates.io Publish

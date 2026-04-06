@@ -1,0 +1,123 @@
+name: Release Desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag to build and upload"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.meta.outputs.ref }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+            case "$tag" in
+              v*) ;;
+              *) tag="v$tag" ;;
+            esac
+            echo "ref=refs/tags/$tag" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Package Desktop ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-desktop-${{ matrix.target }}
+
+      - name: Package desktop artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/package-desktop.sh
+          TARGET="${{ matrix.target }}" BUILD_TARGET="${{ matrix.target }}" ./scripts/package-desktop.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: |
+            dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  publish:
+    name: Upload Desktop Assets
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/raw
+
+      - name: Stage assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          find dist/raw -type f -name 'rumux-desktop-*' -exec cp {} release-artifacts/ \;
+          (
+            cd release-artifacts
+            sha256sum rumux-desktop-* > rumux-desktop-checksums.txt
+          )
+
+      - name: Ensure draft release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --title "$tag" --generate-notes
+          fi
+
+      - name: Upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" release-artifacts/* --clobber --repo "$GITHUB_REPOSITORY"
