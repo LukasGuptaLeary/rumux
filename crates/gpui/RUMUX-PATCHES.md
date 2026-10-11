@@ -14,6 +14,15 @@ window discovery, private structure casts, or changes to the rendering backend.
 use an XWayland parent on Wayland desktops without changing environment variables
 inherited by shells. The original default constructor and Wayland path remain.
 
+`src/window.rs`, `src/platform.rs`, and the Windows `window.rs`/`events.rs` add
+a short native-parent lease. It defers HWND destruction while Rumux constructs
+WebView2 outside a GPUI application borrow. WebView2's synchronous constructor
+pumps messages, including pending terminal tasks; constructing it inside an
+entity update caused a native CI crash (`RefCell already borrowed`). The lease
+keeps the parent valid if the user closes the window during construction and
+releases it when construction finishes. Other platforms retain their default
+window lifecycle.
+
 Use the registry-normalized `Cargo.toml` so all other dependencies keep their
 published versions. `Cargo.toml.orig` remains upstream provenance. Remove this
 patch when a qualified published GPUI version provides these handles.

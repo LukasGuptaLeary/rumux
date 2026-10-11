@@ -257,7 +257,14 @@ impl WindowsWindowInner {
         let mut callback = self.state.borrow_mut().callbacks.should_close.take()?;
         let should_close = callback();
         self.state.borrow_mut().callbacks.should_close = Some(callback);
-        if should_close { None } else { Some(0) }
+        if should_close && self.has_native_leases() {
+            self.close_after_native_lease.set(true);
+            Some(0)
+        } else if should_close {
+            None
+        } else {
+            Some(0)
+        }
     }
 
     fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {

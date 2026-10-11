@@ -458,6 +458,10 @@ pub(crate) struct RequestFrameOptions {
 }
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+    /// Keep a native parent alive across a short external message pump.
+    fn native_handle_lease(&self) -> Option<Rc<dyn HasWindowHandle>> {
+        None
+    }
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;

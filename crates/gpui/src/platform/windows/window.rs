@@ -1,7 +1,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     num::NonZeroIsize,
     path::PathBuf,
     rc::{Rc, Weak},
@@ -61,6 +61,9 @@ pub struct WindowsWindowState {
 }
 
 pub(crate) struct WindowsWindowInner {
+    native_leases: Cell<usize>,
+    pub(crate) close_after_native_lease: Cell<bool>,
+    destroy_scheduled: Cell<bool>,
     hwnd: HWND,
     pub(super) this: Weak<Self>,
     drop_target_helper: IDropTargetHelper,
@@ -219,6 +222,9 @@ impl WindowsWindowInner {
         )?);
 
         Ok(Rc::new_cyclic(|this| Self {
+            native_leases: Cell::new(0),
+            close_after_native_lease: Cell::new(false),
+            destroy_scheduled: Cell::new(false),
             hwnd,
             this: this.clone(),
             drop_target_helper: context.drop_target_helper.clone(),
@@ -500,10 +506,25 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
-        // clone this `Rc` to prevent early release of the pointer
-        let this = self.0.clone();
-        self.0
-            .executor
+        self.0.close_after_native_lease.set(true);
+        self.0.destroy_after_native_leases();
+    }
+}
+
+impl WindowsWindowInner {
+    pub(crate) fn has_native_leases(&self) -> bool {
+        self.native_leases.get() > 0
+    }
+
+    fn destroy_after_native_leases(self: &Rc<Self>) {
+        if self.has_native_leases()
+            || !self.close_after_native_lease.get()
+            || self.destroy_scheduled.replace(true)
+        {
+            return;
+        }
+        let this = self.clone();
+        self.executor
             .spawn(async move {
                 let handle = this.hwnd;
                 unsafe {
@@ -515,7 +536,29 @@ impl Drop for WindowsWindow {
     }
 }
 
+struct WindowsNativeHandleLease(Rc<WindowsWindowInner>);
+impl rwh::HasWindowHandle for WindowsNativeHandleLease {
+    fn window_handle(&self) -> std::result::Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+        let hwnd =
+            NonZeroIsize::new(self.0.hwnd.0 as isize).ok_or(rwh::HandleError::Unavailable)?;
+        // Destruction is deferred until this lease is dropped on the UI thread.
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(rwh::Win32WindowHandle::new(hwnd).into()) })
+    }
+}
+impl Drop for WindowsNativeHandleLease {
+    fn drop(&mut self) {
+        self.0
+            .native_leases
+            .set(self.0.native_leases.get().saturating_sub(1));
+        self.0.destroy_after_native_leases();
+    }
+}
+
 impl PlatformWindow for WindowsWindow {
+    fn native_handle_lease(&self) -> Option<Rc<dyn rwh::HasWindowHandle>> {
+        self.0.native_leases.set(self.0.native_leases.get() + 1);
+        Some(Rc::new(WindowsNativeHandleLease(self.0.clone())))
+    }
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds()
     }

@@ -89,6 +89,7 @@ pub struct BrowserView {
     allowed: bool,
     _input_subscription: Subscription,
     _native_task: Task<()>,
+    _creation_task: Option<Task<()>>,
 }
 
 impl BrowserView {
@@ -112,12 +113,49 @@ impl BrowserView {
             },
         );
         let (sender, receiver) = flume::bounded(64);
+        #[cfg(not(target_os = "windows"))]
         let native = create_native(&url, sender, window, cx);
+        #[cfg(target_os = "windows")]
+        let native: Result<WebView> = Err(anyhow::anyhow!("Browser is starting"));
+        #[cfg(not(target_os = "windows"))]
         let error = native
             .as_ref()
             .err()
             .map(|error| format!("Unable to open browser: {error:#}"));
+        #[cfg(target_os = "windows")]
+        let error = None;
         let window_handle = Window::window_handle(window);
+        // WebView2 construction pumps Windows messages. Run it outside every
+        // GPUI App/Entity borrow so pending PTY tasks can update their views.
+        #[cfg(target_os = "windows")]
+        let creation_task = {
+            let parent = window.native_handle_lease();
+            let initial_url = url.clone();
+            Some(cx.spawn(async move |view, cx| {
+                let native = match parent {
+                    Some(parent) => {
+                        let mut context = WebContext::new(Some(
+                            rumux_core::runtime::rumux_config_dir().join("browser"),
+                        ));
+                        build_native(&initial_url, sender, &parent, &mut context)
+                    }
+                    None => Err(anyhow::anyhow!("Native browser parent is unavailable")),
+                };
+                let _ = view.update(cx, |view, cx| {
+                    match native {
+                        Ok(native) => view.native = Some(native),
+                        Err(error) => {
+                            view.error = Some(format!("Unable to open browser: {error:#}"));
+                            view.loading = false;
+                        }
+                    }
+                    cx.emit(BrowserEvent::Changed);
+                    cx.notify();
+                });
+            }))
+        };
+        #[cfg(not(target_os = "windows"))]
+        let creation_task = None;
         let task = cx.spawn(async move |view, cx| {
             while let Ok(event) = receiver.recv_async().await {
                 if cx
@@ -173,6 +211,7 @@ impl BrowserView {
             allowed: true,
             _input_subscription: subscription,
             _native_task: task,
+            _creation_task: creation_task,
         }
     }
 
@@ -289,6 +328,7 @@ impl HasWindowHandle for BrowserParent<'_> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn create_native(
     url: &str,
     sender: flume::Sender<NativeEvent>,
@@ -314,14 +354,26 @@ fn create_native(
         }
     }
     let parent = BrowserParent(window);
+    cx.update_global::<BrowserRuntime, _>(|runtime, _| {
+        let context = runtime.0.get_or_insert_with(|| {
+            WebContext::new(Some(
+                rumux_core::runtime::rumux_config_dir().join("browser"),
+            ))
+        });
+        build_native(url, sender, &parent, context)
+    })
+}
+
+fn build_native(
+    url: &str,
+    sender: flume::Sender<NativeEvent>,
+    parent: &impl HasWindowHandle,
+    context: &mut WebContext,
+) -> Result<WebView> {
     let titles = sender.clone();
     let pages = sender.clone();
     let focus = sender.clone();
-    cx.update_global::<BrowserRuntime, _>(|runtime, _| {
-        let context = runtime.0.get_or_insert_with(|| WebContext::new(Some(
-            rumux_core::runtime::rumux_config_dir().join("browser"),
-        )));
-        WebViewBuilder::new_with_web_context(context)
+    WebViewBuilder::new_with_web_context(context)
             .with_url(url)
             .with_visible(false)
             .with_initialization_script("document.addEventListener('pointerdown', () => window.ipc.postMessage('rumux:focus'), {capture:true});")
@@ -339,9 +391,8 @@ fn create_native(
                 let _ = sender.try_send(NativeEvent::NewWindow(url));
                 wry::NewWindowResponse::Deny
             })
-            .build_as_child(&parent)
+            .build_as_child(parent)
             .context("Failed to create native browser child view")
-    })
 }
 
 impl Drop for BrowserView {

@@ -129,6 +129,24 @@ until this batch runs there. Native Wayland browser hosting is unsupported;
 Linux browser panes use X11/XWayland. Browser navigation history is not restored,
 and JavaScript evaluation is synchronous.
 
+## Browser CI correction
+
+The approved browser commit `3641c49cf610a86191ea0dff2c9eada1777a3fe3`
+was published to draft PR #9. In
+[CI run 38168310346](https://github.com/LukasGuptaLeary/rumux/actions/runs/38168310346),
+Rustfmt, CLI/core, Linux x86-64 desktop/browser tests and packaging, and macOS
+desktop/browser tests passed. Windows passed Rust tests/build and advanced
+through the terminal checks, then crashed during `browser.create`.
+The stack identifies WebView2's constructor message pump running a pending GPUI
+terminal task while the application was mutably borrowed.
+
+The correction runs Windows browser construction on a foreground task outside
+GPUI application/entity updates. A narrow GPUI native-parent lease delays HWND
+destruction if the window closes during that constructor, then releases the
+parent once construction finishes. Local macOS regression checks pass; Windows
+runtime acceptance still requires the follow-up native run. The user explicitly
+authorized publication of locally checked CI fixes on this branch.
+
 ## Next acceptance boundaries
 
 Durable terminal ownership, Windows browser qualification, SSH workflows and three-platform installation proof

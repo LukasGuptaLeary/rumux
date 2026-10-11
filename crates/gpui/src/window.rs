@@ -4848,6 +4848,14 @@ impl HasWindowHandle for Window {
     }
 }
 
+impl Window {
+    /// Acquire a native parent without borrowing the GPUI application during
+    /// APIs that run an external message pump. Currently supported on Windows.
+    pub fn native_handle_lease(&self) -> Option<Rc<dyn HasWindowHandle>> {
+        self.platform_window.native_handle_lease()
+    }
+}
+
 impl HasDisplayHandle for Window {
     fn display_handle(
         &self,
