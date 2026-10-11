@@ -41,4 +41,5 @@ frames through this exact boundary. Keep the native debug layout check enabled.
 
 Use the registry-normalized `Cargo.toml` so all other dependencies keep their
 published versions. `Cargo.toml.orig` remains upstream provenance. Remove this
-patch when a qualified published GPUI version provides these handles.
+patch when a qualified published GPUI version provides the native handles,
+constructor lifetime protection and rendering stack boundaries.

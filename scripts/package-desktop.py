@@ -102,7 +102,7 @@ def package(target, binaries, dist):
     command = "powershell -ExecutionPolicy Bypass -File .\\install-desktop.ps1" if platform == "windows" else "sh ./install-desktop.sh"
     runtime = {"linux": "Requires X11/XWayland, GTK 3, WebKitGTK 4.1 and the GPUI graphics libraries. Native Wayland supports terminals only.",
                "macos": "Requires macOS 14 or later. This bundle is unsigned and not notarized.",
-               "windows": "Requires Windows 10/11 x64, DirectX 11 and Microsoft Edge WebView2 Runtime. This package is unsigned."}[platform]
+               "windows": "Requires Windows 10/11 x64, DirectX 11, Microsoft Edge WebView2 Runtime and the latest Microsoft Visual C++ v14 x64 runtime.\nRuntime download: https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/\nThis package is unsigned."}[platform]
     (stage / "README.txt").write_text(f"Rumux {version} ({target})\n\nInstall for the current user:\n  {command}\n"
         "The installer checks files.sha256, installs the desktop and CLI, and preserves configuration.\n"
         "Close the desktop and run rumux session stop before upgrading running binaries.\n"

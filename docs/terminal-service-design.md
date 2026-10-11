@@ -2,9 +2,9 @@
 
 This implements the open session-lifecycle acceptance boundary in ROADMAP.md.
 The service follows herdr's separate PTY ownership model while retaining Rumux's
-GPUI shell. Native macOS and Linux suites prove live detach and cold history
-restore. The installed Windows package also passed service lifecycle and private
-state checks at `9cfb02a`; debug layout and Windows SSH qualification remain open.
+GPUI shell. Native macOS, Linux and Windows debug and installed suites prove live
+detach, SSH process survival and cold history restore. All platform gates passed
+at `32b0ad3`; exact source and archive identities are in `development-progress.md`.
 
 The desktop starts a per-profile headless service from the installed app binary.
 It owns PTY masters, child waiters and the authoritative Alacritty parser. Closing
@@ -61,8 +61,9 @@ across desktop exit/restart, input to the resumed shell, scrollback and colors,
 alternate-screen/fragmented-output reattach, resize, explicit close/reaping,
 authenticated IPC, slow-client isolation, SSH forwarding across detach, cold
 history restore, future/corrupt history preservation and disabled persistence.
-macOS/Linux checks have executed. Installed Windows service checks passed;
-the full debug and remote suite remains required.
+These checks have executed on all three native platforms, including the Windows
+client against an isolated POSIX SSH host. Fixtures also verify Windows target
+restart and removal of their temporary state.
 
 The authoritative parser remains in the service, including fragmented VTE/OSC
 input, primary and alternate grids and terminal query responses. Notifications

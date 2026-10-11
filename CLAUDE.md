@@ -93,7 +93,7 @@ The legacy `v1` desktop path has been removed. Files under `app/src/` are the ca
 
 ### Vendored GPUI
 
-`crates/gpui` pins published GPUI 0.2.2 with narrow native-parent patches for X11 and Windows. Preserve its Apache-2.0 license and see `crates/gpui/RUMUX-PATCHES.md` before changing it. Browser tests use local fixtures via `python3 scripts/smoke-desktop.py --browser`.
+`crates/gpui` pins published GPUI 0.2.2 with narrow native-parent patches for X11 and Windows and a rendering stack boundary. Preserve its Apache-2.0 license and see `crates/gpui/RUMUX-PATCHES.md` before changing it. Browser tests use local fixtures via `python3 scripts/smoke-desktop.py --browser`. The workspace test barrier includes the exact vendored stack helper and its small-stack regression.
 
 ### Vendored gpui-terminal
 The `crates/gpui-terminal/` directory is a vendored copy of https://github.com/zortax/gpui-terminal. Rumux patches include palette rendering, scrollback and selection, literal search, terminal protocol replies, bounded output delivery and pane lifecycle hooks. It is a workspace member so its tests run in the full local barrier. Keep changes focused and preserve the upstream license. The streaming OSC parser lives in `rumux-core::terminal_protocol`.

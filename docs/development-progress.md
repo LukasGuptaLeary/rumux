@@ -447,3 +447,46 @@ WSL restart and complete Windows temporary-file cleanup. Remote cleanup errors
 also propagate instead of being silently ignored. This Windows-only harness
 correction passed Python compilation and whitespace checks; no Rust or common
 POSIX harness code changed. Full native Windows SSH qualification remains open.
+
+## Cross-platform completion qualification
+
+[CI run 38180275930](https://github.com/LukasGuptaLeary/rumux/actions/runs/38180275930)
+at `32b0ad32d340297745bae4270f36e8c92fbd9bfb` passed all eight gates:
+formatting, CLI/core, and native debug plus installed packages on Linux x86-64,
+macOS ARM64 and Windows x86-64. Windows passed 140 workspace tests and 28
+doctests. Its debug suite passed 37 checks in 71.44 s with the debugger enabled;
+the installed suite passed all 37 in 41.83 s. Both include native SSH, quoted
+remote directories, directory inheritance, loopback preview forwarding, unchanged
+client/remote-shell PIDs across desktop restart, listener ownership, remote
+screen/history erasure and local bounded receipts. The cold WSL restart proof
+and strict fixture cleanup also passed. The debug layout overflow is resolved.
+
+All three installed manifests identify the same clean PR merge source
+`0084b39599e17662780ede3dec702151d772ccbf`, whose parents are base `a342a593` and
+completion head `32b0ad32`. Archive SHA-256 values are:
+
+| Target | Archive SHA-256 | Native installed checks |
+|---|---|---|
+| Linux x86-64 | `7bdeda36220819cfab03e84550fe75f29cec4e5b35d7b4308e492dbe329c3281` | 36/37, 11.75/8.59 s |
+| macOS ARM64 | `c520137b1cd953978f78ee3fd9ee80191a6fa053ccd0f92e3afb3379c45dccf2` | 36/37, 21.15/19.63 s |
+| Windows x86-64 | `bf3a1f72c9021b0ff0ef1713b5fe209534e657de5884fe3ed6b4ec5324794883` | 37, 41.83 s |
+
+Each installation additionally passed archive checksum verification, damaged-file
+rejection, paths with spaces, native metadata and the installed CLI. Local
+macOS/Linux ARM64 evidence and the separate upstream Alacritty suite remain
+recorded above. A final archive audit confirmed Windows imports VCRUNTIME140 and
+VCRUNTIME140_1; its package/readme now name the required latest Microsoft Visual
+C++ v14 x64 runtime. The qualified Linux ELF imports glibc symbols through 2.39;
+compatibility documentation states that ABI requirement and the Ubuntu 24.04
+build baseline. macOS bundles explicitly require 14 or newer.
+
+The core completion acceptance in ROADMAP.md is satisfied. Remaining distribution
+work is signing/notarization, broader shell/display coverage and owner-authorized
+merge/release publication. Linux browser hosting still requires X11/XWayland;
+JavaScript evaluation is synchronous and remote command syntax is POSIX. No tag
+or desktop release was published, and PR #9 remains a draft for owner review.
+The final documentation/package-readme batch does not change terminal, browser,
+SSH, CLI or service behavior. The normal native CI barrier also applies to it.
+The earlier UI-test recovery snapshots were copied byte-for-byte to a permanent,
+private evidence archive outside the repository. The temporary originals and
+actual profile files remain preserved; no automatic restoration was attempted.

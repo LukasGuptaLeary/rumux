@@ -8,30 +8,36 @@ This document defines the current compatibility and support expectations for `ru
 |---------|---------------|---------------------|----------------|
 | CLI release binaries | Supported | Supported | Supported via release zip |
 | CLI source build | Supported | Supported | Supported |
-| Desktop source build | Validated | Validated | Build/tests passed; runtime qualification pending |
-| Desktop package implementation | `tar.gz` with user installer | `.app` zip with user installer | Zip with PowerShell installer; installed checks passed, SSH pending |
+| Desktop source build and native checks | Validated | Validated | Validated |
+| Installed desktop package | Validated `tar.gz` and user installer | Validated `.app` zip and user installer | Validated zip and PowerShell user installer |
 
 Notes:
 
 - Linux desktop builds require the GPUI display libraries plus GTK 3 and WebKitGTK 4.1. Browser panes require an X11/XWayland parent; Rumux selects it when `DISPLAY` is available. `RUMUX_LINUX_BACKEND=wayland` retains the native Wayland terminal shell with an explicit browser-unavailable message.
-- macOS desktop release artifacts are currently unsigned and not notarized.
-- Windows packages are unsigned and require WebView2 Runtime. Installers include
+- macOS desktop packages require macOS 14 or newer and are unsigned and not notarized.
+- Windows packages are unsigned and require DirectX 11, WebView2 Runtime and
+  Microsoft's latest [Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/).
+  Installers include
   both desktop and CLI, verify extracted file hashes, and leave config/history
   outside the installation. The published `v0.1.0` release has CLI assets only;
   desktop packages await a future qualified release.
-- Windows desktop support is an active validation target, not a compatibility promise yet.
 - The completion branch adds native build/test/smoke gates for Linux, macOS and
-  Windows. A configured gate is not evidence that it has passed; Windows remains
-  unqualified: WebView2 construction and browser automation now pass, but
-  the debug build still overflows during mixed-layout rendering at `9cfb02a`.
-  The optimized installed package passed browser, ACL, detach and cold-history
-  checks at that head. A rendering-boundary stack guard and native Windows SSH
-  fixture require a new complete Windows run.
+  Windows. All eight gates passed at `32b0ad3` in
+  [CI run 38180275930](https://github.com/LukasGuptaLeary/rumux/actions/runs/38180275930),
+  including debug layout, installed packages, native SSH and private state.
+  Package manifests identify the same clean PR merge commit
+  `0084b39599e17662780ede3dec702151d772ccbf`.
 - Native package gates extract and install into owned directories with spaces,
   reject tampered files, validate metadata, launch the installed CLI/desktop and
-  exercise its terminal service, browser and SSH. Windows SSH uses the native
-  Windows client against an isolated WSL1 POSIX target. These gates run
+  exercise its terminal service, browser and SSH. Windows CI uses the native
+  Windows client against an isolated WSL1 POSIX target; users need an OpenSSH
+  client and a remote POSIX shell, not a local WSL installation. These gates run
   independently of debug-build checks; both are required acceptance evidence.
+- Native coverage is Linux X11/XWayland, macOS ARM64, Windows cmd.exe and remote
+  POSIX shells. Other shell configurations and display/driver combinations
+  are additional compatibility targets. Linux CI archives are built on Ubuntu
+  24.04 and the qualified x86-64 binary requires glibc 2.39 or newer; build from
+  source for older or otherwise incompatible distributions.
 
 ## On-Disk State
 

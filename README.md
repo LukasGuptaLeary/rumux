@@ -63,7 +63,7 @@ cargo run -p rumux-app --features runtime-shaders
 
 On Linux, expect to need the usual development headers for Wayland and/or X11, `xkbcommon`, `fontconfig`, and `dbus` before building the desktop app.
 
-Desktop release artifacts:
+Desktop packages:
 
 - `rumux-desktop-x86_64-unknown-linux-gnu.tar.gz`
 - `rumux-desktop-aarch64-apple-darwin.zip`
@@ -93,6 +93,12 @@ and history live separately from the installation. Bundles are unsigned;
 macOS notarization, Windows signing and distro-specific packages remain future
 distribution work. The existing `v0.1.0` release contains CLI assets only; these
 desktop packages require a future qualified release.
+
+The macOS bundle requires macOS 14 or newer. Windows requires DirectX 11,
+WebView2 Runtime and the latest
+[Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/).
+Linux CI packages target Ubuntu 24.04-compatible libraries; build from source
+on older distributions.
 
 Current desktop support policy lives in [COMPATIBILITY.md](COMPATIBILITY.md).
 
@@ -216,7 +222,8 @@ Linux uses X11 or XWayland when `DISPLAY` is available so WebKitGTK can embed a
 native child view. `RUMUX_LINUX_BACKEND=wayland` selects the native Wayland
 terminal shell; embedded browsers require XWayland. Install GTK 3 and
 WebKitGTK 4.1 runtime libraries on Linux, and WebView2 Runtime on Windows.
-Windows browser behavior still requires native CI qualification.
+Native browser layout, navigation and automation pass debug and installed-package
+checks on all three platforms. See [COMPATIBILITY.md](COMPATIBILITY.md) for coverage.
 
 ### SSH workspaces
 
@@ -246,9 +253,8 @@ bind it again, and closing that pane closes the listener. Forwarding binds only
 local loopback. The `create_ssh_workspace` MCP tool accepts a typed `ssh` object,
 also available through `workspace.create` RPC.
 
-Real connections, forwarding and process survival are checked against an isolated
-loopback server on macOS and Linux. Windows SSH runtime and remote shells that
-do not accept POSIX command syntax still require qualification.
+Real connections, forwarding and process survival pass native debug and installed
+checks on macOS, Linux and Windows. Remote shells must accept POSIX command syntax.
 
 ### Terminal service and history
 
