@@ -24,6 +24,9 @@ cargo test --workspace --features rumux-app/runtime-shaders --locked
 # Real desktop/PTY/CLI/MCP integration (isolated configuration)
 python3 scripts/smoke-desktop.py
 
+# Embedded browser and real loopback SSH integration (requires OpenSSH server)
+python3 scripts/smoke-desktop.py --browser --ssh
+
 # Install from the current checkout
 cargo install --path crates/rumux-cli
 cp target/release/rumux-app ~/.cargo/bin/
@@ -75,7 +78,7 @@ Pure Rust, GPU-accelerated via GPUI framework (from Zed).
 - **Terminal**: `gpui-terminal` crate wraps `alacritty_terminal` for VTE parsing + GPU cell rendering. `portable-pty` for PTY I/O.
 - **State model**: GPUI entities — AppState → Workspace → DockArea → TerminalPanel → TerminalView
 - **Layout**: Dock/tree model from `gpui-component`, mirroring the architectural style used by Zed
-- **Session restore**: Dock layout, stable pane IDs, terminal launch directories and browser URLs are serialized per workspace
+- **Session restore**: Dock layout, stable pane IDs, terminal launch directories, browser URLs and typed SSH connections are serialized per workspace. SSH reconnects; process survival is pending.
 - **Socket API**: local RPC over Unix sockets on Unix and loopback TCP on non-Unix
 - **Notifications**: OSC 777/99/9 escape sequences parsed from PTY output
 

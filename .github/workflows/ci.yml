@@ -56,13 +56,13 @@ jobs:
       - name: Desktop PTY smoke test (Linux)
         if: runner.os == 'Linux'
         run: |
-          dbus-run-session -- xvfb-run -a python3 scripts/smoke-desktop.py --browser
-          dbus-run-session -- xvfb-run -a python3 scripts/smoke-desktop.py --browser --tcp
+          dbus-run-session -- xvfb-run -a python3 scripts/smoke-desktop.py --browser --ssh
+          dbus-run-session -- xvfb-run -a python3 scripts/smoke-desktop.py --browser --ssh --tcp
       - name: Desktop PTY smoke test (macOS)
         if: runner.os == 'macOS'
         run: |
-          python3 scripts/smoke-desktop.py --browser
-          python3 scripts/smoke-desktop.py --browser --tcp
+          python3 scripts/smoke-desktop.py --browser --ssh
+          python3 scripts/smoke-desktop.py --browser --ssh --tcp
       - name: Desktop PTY smoke test (Windows)
         if: runner.os == 'Windows'
         run: python scripts/smoke-desktop.py --app target/debug/rumux-app.exe --cli target/debug/rumux.exe --browser

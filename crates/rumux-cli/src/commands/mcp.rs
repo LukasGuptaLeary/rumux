@@ -147,6 +147,16 @@ fn handle_tool_call(params: &Value) -> Result<Value> {
         "get_current_workspace" => execute_rpc(name, "workspace.current", Value::Object(arguments)),
         "select_workspace" => execute_rpc(name, "workspace.select", Value::Object(arguments)),
         "create_workspace" => execute_rpc(name, "workspace.create", Value::Object(arguments)),
+        "create_ssh_workspace" => {
+            let connection: rumux_core::ssh::SshConnection = serde_json::from_value(
+                arguments
+                    .get("ssh")
+                    .cloned()
+                    .context("create_ssh_workspace requires ssh parameters")?,
+            )?;
+            connection.validate()?;
+            execute_rpc(name, "workspace.create", Value::Object(arguments))
+        }
         "rename_workspace" => execute_rpc(name, "workspace.rename", Value::Object(arguments)),
         "duplicate_workspace" => execute_rpc(name, "workspace.duplicate", Value::Object(arguments)),
         "next_workspace" => execute_rpc(name, "workspace.next", Value::Object(arguments)),
@@ -311,6 +321,29 @@ fn tool_definitions() -> Vec<Value> {
             "create_workspace",
             "Create a new workspace, optionally with a custom name.",
             json_schema_object([("name", string_schema("Optional workspace name"))]),
+        ),
+        tool(
+            "create_ssh_workspace",
+            "Create an OpenSSH workspace on a POSIX remote host. Tabs and splits inherit the host and remote directory. Forwarded listeners belong to the original pane; host authentication uses OpenSSH known-host verification.",
+            json!({"type":"object", "properties": {
+                "name": string_schema("Optional workspace name"),
+                "ssh": {"type":"object", "properties": {
+                    "host": string_schema("Host, IP address or OpenSSH configuration alias"),
+                    "user": string_schema("Optional remote username"),
+                    "port": {"type":"integer", "minimum":1, "maximum":65535},
+                    "directory": string_schema("Absolute POSIX launch directory"),
+                    "identity_file": string_schema("Local private-key file; OpenSSH handles authentication"),
+                    "known_hosts_file": string_schema("Local known-hosts file; strict host-key checking when supplied"),
+                    "config_file": string_schema("Optional local OpenSSH configuration file"),
+                    "forwards": {"type":"array", "maxItems":16, "items": {
+                        "type":"object", "properties": {
+                            "local_port": {"type":"integer", "minimum":1, "maximum":65535},
+                            "remote_port": {"type":"integer", "minimum":1, "maximum":65535},
+                            "remote_host": string_schema("Remote forwarding host; defaults to 127.0.0.1")
+                        }, "required":["local_port","remote_port"], "additionalProperties":false
+                    }}
+                }, "required":["host"], "additionalProperties":false}
+            }, "required":["ssh"], "additionalProperties":false}),
         ),
         tool(
             "rename_workspace",

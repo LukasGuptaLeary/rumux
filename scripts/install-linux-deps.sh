@@ -10,4 +10,6 @@ apt-get install -y --no-install-recommends \
     libx11-dev libx11-xcb-dev libxcb1-dev libxi-dev libxrandr-dev libxcursor-dev \
     libdbus-1-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
     libgtk-3-dev libwebkit2gtk-4.1-dev \
-    dbus-x11 xvfb xauth python3 fonts-dejavu-core
+    dbus-x11 xvfb xauth python3 fonts-dejavu-core openssh-client openssh-server
+# Required by sshd privilege separation in the isolated loopback test fixture.
+install -d -m 0755 /run/sshd

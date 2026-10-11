@@ -127,6 +127,8 @@ enum Commands {
     },
     /// Run a stdio MCP server that controls a running rumux desktop app
     Mcp,
+    /// Open an SSH workspace in the running desktop app
+    Ssh(commands::ssh::SshOptions),
 }
 
 fn main() {
@@ -170,6 +172,7 @@ fn main() {
             json,
         } => commands::socket_client::run_raw(method, params, json),
         Commands::Mcp => commands::mcp::run(),
+        Commands::Ssh(ref options) => commands::ssh::run(options),
     };
 
     if let Err(e) = result {

@@ -14,6 +14,7 @@ mod root_view;
 mod session;
 mod sidebar;
 mod socket_server;
+mod ssh_dialog;
 mod terminal_panel;
 mod terminal_surface;
 mod theme;

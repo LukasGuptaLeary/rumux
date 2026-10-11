@@ -138,6 +138,9 @@ impl AppState {
         };
         snapshot.name = format!("{} (copy)", snapshot.name);
         snapshot.id = None;
+        if let Some(connection) = &mut snapshot.ssh {
+            connection.forwards.clear();
+        }
         if let Some(dock) = &mut snapshot.dock_area {
             clear_panel_ids(&mut dock.center);
         }
@@ -212,6 +215,30 @@ impl AppState {
         self.active_workspace_idx = self.workspaces.len() - 1;
         cx.notify();
         self.save_session(cx);
+        self.focus_active_workspace(window, cx);
+    }
+
+    pub fn add_ssh_workspace(
+        &mut self,
+        name: Option<String>,
+        connection: rumux_core::ssh::SshConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| format!("SSH {}", connection.destination()));
+        let color = Self::workspace_color(self.workspaces.len());
+        let workspace = cx.new(|cx| {
+            let mut workspace = Workspace::new_ssh(name, connection, window, cx);
+            workspace.color = Some(color);
+            workspace
+        });
+        self.track_workspace(&workspace, cx);
+        self.workspaces.push(workspace);
+        self.active_workspace_idx = self.workspaces.len() - 1;
+        self.save_session(cx);
+        cx.notify();
         self.focus_active_workspace(window, cx);
     }
 
@@ -424,6 +451,9 @@ fn clear_panel_ids(panel: &mut gpui_component::dock::PanelState) {
         if let gpui_component::dock::PanelInfo::Panel(value) = &mut panel.info {
             if let Some(info) = value.as_object_mut() {
                 info.remove("id");
+                if let Some(ssh) = info.get_mut("ssh").filter(|ssh| ssh.is_object()) {
+                    ssh["forwards"] = serde_json::json!([]);
+                }
             }
         }
     }

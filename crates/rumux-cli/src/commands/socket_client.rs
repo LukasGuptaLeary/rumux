@@ -79,7 +79,7 @@ pub fn run_raw(method: &str, params: &str, _json: bool) -> Result<()> {
     ensure_success(&response)
 }
 
-fn ensure_success(response: &serde_json::Value) -> Result<()> {
+pub(crate) fn ensure_success(response: &serde_json::Value) -> Result<()> {
     if response.get("ok") == Some(&serde_json::Value::Bool(true)) {
         return Ok(());
     }

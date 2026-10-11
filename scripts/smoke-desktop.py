@@ -39,6 +39,7 @@ def main():
     parser.add_argument("--cli", default="target/debug/rumux")
     parser.add_argument("--tcp", action="store_true", help="Exercise authenticated loopback TCP on Unix too")
     parser.add_argument("--browser", action="store_true", help="Exercise the embedded browser against local fixture pages")
+    parser.add_argument("--ssh", action="store_true", help="Exercise SSH terminals and forwarding against a local ephemeral sshd")
     args = parser.parse_args()
     app, cli = Path(args.app).resolve(), Path(args.cli).resolve()
     assert app.is_file() and cli.is_file(), "Build rumux-app and rumux-cli first"
@@ -337,6 +338,81 @@ def main():
                     finally:
                         fixture.shutdown()
                         thread.join(timeout=5)
+            if args.ssh:
+                from ssh_fixture import SshFixture
+                with SshFixture(root) as fixture:
+                    connection = fixture.connection
+                    create = subprocess.run([str(cli), "ssh", f'{connection["user"]}@{connection["host"]}',
+                        "--port", str(connection["port"]), "--cwd", connection["directory"],
+                        "--identity-file", connection["identity_file"], "--known-hosts-file", connection["known_hosts_file"],
+                        "--config-file", connection["config_file"], "--forward", f'{fixture.local_port}:{fixture.server.server_port}',
+                        "--name", "SSH smoke", "--json"], env=env, capture_output=True, text=True, timeout=10)
+                    assert create.returncode == 0, create.stderr
+                    remote_workspace = json.loads(create.stdout)["result"]
+                    remote_id = remote_workspace["id"]
+                    remote = next(s for s in rpc("surface.list")["surfaces"] if s.get("ssh"))
+                    remote_target = {"surface_id":remote["id"]}
+                    result = rpc("surface.run_command", dict(remote_target, command="printf '%s\\n' SSH_CONNECTED; pwd; printf '%s\\n' \"$TERM_PROGRAM\" \"$RUMUX_SURFACE_ID\"", timeout_ms=10000))
+                    assert result["completed"] and result["exit_code"] == 0, result
+                    assert str(fixture.directory) in result["output"] and remote["id"] in result["output"] and "rumux" in result["output"], result
+                    checks.append("SSH PTY, quoted launch directory and remote surface environment")
+
+                    mcp_connection = dict(connection, forwards=[])
+                    requests = [
+                        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}},
+                        {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_ssh_workspace","arguments":{"name":"MCP SSH", "ssh":mcp_connection}}},
+                    ]
+                    mcp = subprocess.run([str(cli), "mcp"], input="".join(json.dumps(r)+"\n" for r in requests),
+                                         text=True, capture_output=True, env=env, timeout=10)
+                    responses = [json.loads(line) for line in mcp.stdout.splitlines()]
+                    assert mcp.returncode == 0 and not responses[1]["result"]["isError"], (mcp.stderr, responses)
+                    mcp_workspace = responses[1]["result"]["structuredContent"]
+                    mcp_surface = next(s for s in rpc("surface.list")["surfaces"] if s.get("ssh"))
+                    result = rpc("surface.run_command", {"surface_id":mcp_surface["id"],"command":"printf MCP_SSH_CONNECTED", "timeout_ms":10000})
+                    assert result["completed"] and "MCP_SSH_CONNECTED" in result["output"], result
+                    rpc("workspace.close", {"workspace_id":mcp_workspace["id"]})
+                    rpc("workspace.select", {"workspace_id":remote_id})
+                    checks.append("typed SSH CLI and MCP to real remote PTYs")
+
+                    change = "cd -- " + shlex.quote(str(fixture.changed_directory)) + "; " + python_command(
+                        f"import sys;sys.stdout.write('\\x1b]7;{fixture.changed_directory.as_uri()}\\x07');sys.stdout.flush()")
+                    rpc("surface.send_text", dict(remote_target, text=change, append_newline=True))
+                    eventually(lambda: next(s for s in rpc("surface.list")["surfaces"] if s["id"] == remote["id"])["cwd"] == str(fixture.changed_directory))
+                    inherited = rpc("surface.split", dict(remote_target, placement="down"))["created"]
+                    assert inherited["ssh"]["directory"] == str(fixture.changed_directory) and not inherited["ssh"]["forwards"], inherited
+                    result = rpc("surface.run_command", {"surface_id":inherited["id"],"command":"pwd","timeout_ms":10000})
+                    assert result["completed"] and str(fixture.changed_directory) in result["output"], result
+                    checks.append("remote directory inheritance and independent SSH splits")
+
+                    preview = None
+                    if args.browser:
+                        preview = rpc("browser.create", dict(remote_target, url=f"http://127.0.0.1:{fixture.local_port}/", placement="right"))["created"]
+                        eventually(lambda: rpc("browser.snapshot", {"surface_id":preview["id"]})["value"]["title"] == "SSH forwarded preview")
+                        checks.append("browser preview through loopback SSH forwarding")
+
+                    copy = rpc("workspace.duplicate", {"workspace_id":remote_id})
+                    copied_surfaces = rpc("surface.list")["surfaces"]
+                    assert all(not s["ssh"]["forwards"] for s in copied_surfaces if s.get("ssh"))
+                    assert all(s["id"] not in [remote["id"],inherited["id"]] for s in copied_surfaces)
+                    rpc("workspace.close", {"index":copy["index"]})
+                    rpc("workspace.select", {"workspace_id":remote_id})
+                    stop()
+                    launch()
+                    rpc("workspace.select", {"workspace_id":remote_id})
+                    restored = next(s for s in rpc("surface.list")["surfaces"] if s["id"] == remote["id"])
+                    assert restored["ssh"]["directory"] == str(fixture.changed_directory)
+                    result = rpc("surface.run_command", dict(remote_target, command="pwd", timeout_ms=10000))
+                    assert result["completed"] and str(fixture.changed_directory) in result["output"], result
+                    checks.append("SSH identities, independent copies and restart reconnect")
+                    rpc("workspace.close", {"workspace_id":remote_id})
+                    def forwarding_closed():
+                        try:
+                            with socket.create_connection(("127.0.0.1",fixture.local_port),timeout=.2):
+                                return False
+                        except OSError:
+                            return True
+                    eventually(forwarding_closed)
+                    checks.append("SSH pane ownership closes its forwarded listener")
         except BaseException:
             try:
                 print(json.dumps({"surfaces":rpc("surface.list"),"last_terminal":rpc("surface.read",{"scope":"buffer","max_chars":4000})}, indent=2), file=sys.stderr)

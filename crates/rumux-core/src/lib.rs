@@ -5,5 +5,6 @@ pub mod errors;
 pub mod git_ops;
 pub mod rpc;
 pub mod runtime;
+pub mod ssh;
 pub mod status;
 pub mod terminal_protocol;

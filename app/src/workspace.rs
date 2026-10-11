@@ -29,6 +29,8 @@ pub enum WorkspaceEvent {
 pub struct SurfaceSummary {
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<rumux_core::ssh::SshConnection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     pub id: String,
     pub index: usize,
@@ -44,6 +46,8 @@ pub struct SurfaceSummary {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<rumux_core::ssh::SshConnection>,
     pub id: String,
     pub index: usize,
     pub name: String,
@@ -75,6 +79,7 @@ struct SurfaceTarget {
 }
 
 pub struct Workspace {
+    pub ssh: Option<rumux_core::ssh::SshConnection>,
     pub id: Uuid,
     pub name: String,
     pub dock_area: Entity<DockArea>,
@@ -94,7 +99,24 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::build(name, cwd, None, Some(1), window, cx)
+        Self::build(name, cwd, None, None, Some(1), window, cx)
+    }
+
+    pub fn new_ssh(
+        name: String,
+        connection: rumux_core::ssh::SshConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::build(
+            name,
+            connection.directory.clone(),
+            Some(connection),
+            None,
+            Some(1),
+            window,
+            cx,
+        )
     }
 
     pub fn from_session(
@@ -119,6 +141,7 @@ impl Workspace {
         let mut workspace = Self::build(
             session.name,
             cwd,
+            session.ssh,
             session.dock_area,
             Some(next_terminal_index),
             window,
@@ -132,6 +155,7 @@ impl Workspace {
 
     pub fn to_session(&self, cx: &App) -> WorkspaceSession {
         WorkspaceSession {
+            ssh: self.ssh.clone(),
             id: Some(self.id.to_string()),
             name: self.name.clone(),
             cwd: self.cwd.clone().unwrap_or_default(),
@@ -143,6 +167,7 @@ impl Workspace {
     fn build(
         name: String,
         cwd: Option<String>,
+        ssh: Option<rumux_core::ssh::SshConnection>,
         dock_state: Option<DockAreaState>,
         next_terminal_index: Option<usize>,
         window: &mut Window,
@@ -170,13 +195,14 @@ impl Workspace {
         }
 
         if !loaded_state {
-            let center = Self::default_center(initial_cwd, &dock_area, window, cx);
+            let center = Self::default_center(initial_cwd, ssh.as_ref(), &dock_area, window, cx);
             dock_area.update(cx, |area, cx| {
                 area.set_center(center, window, cx);
             });
         }
 
         let mut workspace = Self {
+            ssh,
             id: Uuid::new_v4(),
             name,
             dock_area,
@@ -254,11 +280,12 @@ impl Workspace {
 
     fn default_center(
         cwd: Option<&std::path::Path>,
+        ssh: Option<&rumux_core::ssh::SshConnection>,
         dock_area: &Entity<DockArea>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockItem {
-        let panel = Self::create_terminal_panel(cwd, 0, cx);
+        let panel = Self::create_terminal_panel(cwd, ssh, 0, cx);
         DockItem::h_split(
             vec![DockItem::tab(
                 panel,
@@ -274,11 +301,17 @@ impl Workspace {
 
     fn create_terminal_panel(
         cwd: Option<&std::path::Path>,
+        ssh: Option<&rumux_core::ssh::SshConnection>,
         index: usize,
         cx: &mut Context<Self>,
     ) -> Entity<TerminalPanel> {
         cx.new(|cx| {
-            TerminalPanel::from_cwd(cwd, index, cx).unwrap_or_else(|error| {
+            let created = if let Some(connection) = ssh {
+                TerminalPanel::from_ssh(connection.clone(), index, uuid::Uuid::new_v4(), cx)
+            } else {
+                TerminalPanel::from_cwd(cwd, index, cx)
+            };
+            created.unwrap_or_else(|error| {
                 let term = terminal_error_view(&mut **cx, &error);
                 TerminalPanel::new(
                     term,
@@ -390,6 +423,7 @@ impl Workspace {
 
     pub fn summary(&self, index: usize, active: bool, cx: &App) -> WorkspaceSummary {
         WorkspaceSummary {
+            ssh: self.ssh.clone(),
             id: self.id.to_string(),
             index,
             name: self.name.clone(),
@@ -411,6 +445,7 @@ impl Workspace {
                 let panel = target.panel.read(cx);
                 SurfaceSummary {
                     kind: "terminal",
+                    ssh: panel.ssh.clone(),
                     url: None,
                     id: panel.id.to_string(),
                     index: panel.index(),
@@ -435,6 +470,7 @@ impl Workspace {
                 index: browser.index,
                 title: browser.title_text(cx),
                 kind: "browser",
+                ssh: None,
                 url: Some(browser.browser.read(cx).url.clone()),
                 cwd: None,
                 active_tab: tab.read(cx).active_index() == position,
@@ -1045,7 +1081,10 @@ impl Workspace {
         let index = self.current_next_terminal_index(cx);
         self.next_terminal_index = index + 1;
 
-        let panel = Self::create_terminal_panel(cwd, index, cx);
+        let connection = self.ssh.as_ref().map(|connection| {
+            connection.for_new_pane(cwd.map(|path| path.to_string_lossy().into_owned()))
+        });
+        let panel = Self::create_terminal_panel(cwd, connection.as_ref(), index, cx);
         let panel_view: Arc<dyn PanelView> = Arc::new(panel.clone());
         (index, panel, panel_view)
     }

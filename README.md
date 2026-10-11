@@ -87,6 +87,7 @@ Current desktop support policy lives in [COMPATIBILITY.md](COMPATIBILITY.md).
 | `rumux version` | Print version |
 | `rumux completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
 | `rumux mcp` | Run a stdio MCP server for a running `rumux-app` instance |
+| `rumux ssh [user@]host [--cwd /remote/path] [-L local:remote]` | Open an SSH workspace in the running desktop app |
 
 ## Typical Workflow
 
@@ -190,6 +191,37 @@ native child view. `RUMUX_LINUX_BACKEND=wayland` selects the native Wayland
 terminal shell; embedded browsers require XWayland. Install GTK 3 and
 WebKitGTK 4.1 runtime libraries on Linux, and WebView2 Runtime on Windows.
 Windows browser behavior still requires native CI qualification.
+
+### SSH workspaces
+
+Choose **Connect SSH** in the command palette, or use the CLI:
+
+```bash
+rumux ssh me@dev-box --cwd /home/me/project --name "Remote project"
+# Preview a service listening on the remote host's loopback interface
+rumux ssh dev-box --cwd /srv/project --forward 3001:3000
+rumux rpc browser.create '{"url":"http://127.0.0.1:3001"}'
+```
+
+OpenSSH must be on `PATH`. Hosts may be aliases from your SSH config. The dialog
+has advanced fields for an identity, config and known-hosts file; the CLI also
+accepts `--identity-file`, `--config-file`, `--known-hosts-file` and `--port`.
+Authentication prompts appear in the terminal. Supplying a known-hosts file
+enables strict host-key verification. Private keys and credentials are handled
+by OpenSSH.
+
+Remote POSIX shells export `TERM_PROGRAM=rumux` and their stable
+`RUMUX_SURFACE_ID`. OSC 7 directory updates are retained for subsequent tabs and
+splits. Connections and launch directories reconnect on restart. A forwarded
+listener belongs to its original pane; new tabs and workspace copies do not
+bind it again, and closing that pane closes the listener. Forwarding binds only
+local loopback. The `create_ssh_workspace` MCP tool accepts a typed `ssh` object,
+also available through `workspace.create` RPC.
+
+Real connections, forwarding and reconnect are checked against an isolated
+loopback server on macOS and Linux. Windows SSH runtime and remote shells that
+do not accept POSIX command syntax still require qualification. These are new
+connections after restart; current terminal processes do not survive app exit.
 
 ### MCP Integration
 

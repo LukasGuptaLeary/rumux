@@ -8,12 +8,14 @@ use crate::command_palette::{CommandPalette, PaletteEvent};
 use crate::find_bar::FindBar;
 use crate::notification_panel::NotificationPanel;
 use crate::sidebar::WorkspaceSidebar;
+use crate::ssh_dialog::{DismissSshDialog, SshDialog};
 use crate::theme;
 
 actions!(
     rumux,
     [
         NewWorkspace,
+        ConnectSsh,
         CloseWorkspace,
         SplitRight,
         SplitDown,
@@ -39,6 +41,7 @@ pub struct RootView {
     app_state: Entity<AppState>,
     sidebar: Entity<WorkspaceSidebar>,
     command_palette: Option<Entity<CommandPalette>>,
+    ssh_dialog: Option<Entity<SshDialog>>,
     notification_panel: Option<Entity<NotificationPanel>>,
     find_bar: Option<Entity<FindBar>>,
     sidebar_visible: bool,
@@ -72,6 +75,7 @@ impl RootView {
             app_state,
             sidebar,
             command_palette: None,
+            ssh_dialog: None,
             notification_panel: None,
             find_bar: None,
             sidebar_visible,
@@ -87,6 +91,7 @@ impl Render for RootView {
         let active_ws = self.app_state.read(cx).active_workspace().clone();
         let workspaces = self.app_state.read(cx).workspaces.clone();
         let browser_visible = self.command_palette.is_none()
+            && self.ssh_dialog.is_none()
             && self.notification_panel.is_none()
             && self.find_bar.is_none();
         for workspace in workspaces {
@@ -108,6 +113,16 @@ impl Render for RootView {
             .on_action(cx.listener(|root, _: &NewWorkspace, window, cx| {
                 root.app_state
                     .update(cx, |state, cx| state.add_workspace(window, cx));
+            }))
+            .on_action(cx.listener(|root, _: &ConnectSsh, window, cx| {
+                let dialog = cx.new(|cx| SshDialog::new(root.app_state.clone(), window, cx));
+                cx.subscribe(&dialog, |root, _, _: &DismissSshDialog, cx| {
+                    root.ssh_dialog = None;
+                    cx.notify();
+                })
+                .detach();
+                root.ssh_dialog = Some(dialog);
+                cx.notify();
             }))
             .on_action(cx.listener(|root, _: &CloseWorkspace, _window, cx| {
                 let idx = root.app_state.read(cx).active_workspace_idx;
@@ -300,6 +315,9 @@ impl Render for RootView {
         }
         if let Some(bar) = &self.find_bar {
             container = container.child(bar.clone());
+        }
+        if let Some(dialog) = &self.ssh_dialog {
+            container = container.child(dialog.clone());
         }
 
         container

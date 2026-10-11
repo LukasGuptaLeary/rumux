@@ -147,6 +147,42 @@ parent once construction finishes. Local macOS regression checks pass; Windows
 runtime acceptance still requires the follow-up native run. The user explicitly
 authorized publication of locally checked CI fixes on this branch.
 
+## SSH workspace checkpoint
+
+Typed OpenSSH workspaces are available through the Connect SSH palette dialog,
+`rumux ssh` CLI, `workspace.create` RPC and `create_ssh_workspace` MCP tool.
+Arguments keep host/config/key paths separate from the quoted remote directory.
+Host authentication uses OpenSSH; test connections use strict known-host
+verification. SSH panes export their stable surface ID and retain remote OSC 7
+directories for new tabs and splits. Local forwarding binds loopback and belongs
+to its original pane. Copies and new panes do not duplicate listeners.
+Schema 5 persists connection parameters and launch directories for reconnect.
+
+macOS ARM64 and Linux ARM64 passed 129 workspace tests and 28 doctests (28
+existing illustrative doctests ignored). The extended native suite passed 25
+Unix-socket checks and 26 authenticated-TCP checks on each platform: macOS
+8.05 s / 7.01 s, Linux 6.13 s / 5.39 s. A repeat including the Windows browser
+correction passed Linux checks in 5.85 s / 5.57 s. The Linux test source archive
+has SHA-256 `b3801e8153055b721a124f9b0fd9b739acd021d2ad0eba445c519a731f458de3`;
+validation image ID is
+`sha256:1ff5dbac0e7e0489f48a914ab063717b4b9a900cd39b683525d9e97d54f5d474`.
+Clippy completed with existing warnings.
+
+Live macOS inspection verified invalid-destination errors and a real connection
+through the advanced form, followed by remote output and a launch directory
+containing spaces and a quote. Fixtures use their own loopback sshd, host/client
+keys, config and known-hosts file. Linux StrictModes rejected a disposable
+authorized-key file beneath world-writable `/tmp`; the fixture now places only
+that temporary file under the test account's home, outside `.ssh`, and removes
+it on cleanup. Password authentication remains disabled. A separate discovered
+RPC bug (commands producing no final newline timed out despite completing) has
+a regression test and now recognizes the numeric exit-marker suffix.
+
+Windows SSH runtime remains unqualified. Remote shells must accept POSIX command
+syntax. Restart currently establishes new SSH connections and shells; detached
+process survival remains a separate acceptance boundary. No actual remote user
+host, user SSH keys or known-hosts files were changed by these tests.
+
 ## Next acceptance boundaries
 
 Durable terminal ownership, Windows browser qualification, SSH workflows and three-platform installation proof

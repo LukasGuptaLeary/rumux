@@ -19,7 +19,9 @@ Notes:
 - The completion branch adds native build/test/smoke gates for Linux, macOS and
   Windows. A configured gate is not evidence that it has passed; Windows remains
   unqualified: the initial runner passed Rust tests/build but failed a live shell
-  status check. The proposed Enter-key correction requires a subsequent run.
+  status check. The browser batch's subsequent run advanced through the terminal
+  checks but crashed during WebView2 construction. Its correction still requires
+  native Windows runtime validation.
 
 ## On-Disk State
 
@@ -58,12 +60,19 @@ Expectations:
 - Method removal or semantic changes should be called out in the changelog and release notes.
 - The `rumux mcp` bridge is a compatibility layer over this same local RPC contract, not a separate control plane.
 - Workspace and surface summary `id` fields are stable UUIDs, persisted in
-  schema 3 and later. Schema 4 adds browser panes and URLs. Older sessions receive IDs on load. Selectors accept `workspace_id`
+  schema 3 and later. Schema 4 adds browser panes and URLs; schema 5 adds typed
+  SSH connections and remote launch directories. Older sessions receive IDs on load. Selectors accept `workspace_id`
   and `surface_id`; indices are retained for compatibility. Copies get fresh
   IDs. Long-running requests pin their initial target.
 - Direct TCP clients now require the profile's `auth_token` on every request.
   The CLI/MCP bridge handle authentication automatically. This intentionally
   closes the previous unauthenticated loopback control path.
+
+SSH workspaces require an OpenSSH client and a remote shell accepting POSIX
+command syntax. SSH sessions currently reconnect after app restart. Layout
+restore does not preserve a running local or remote shell process. Linux/macOS
+loopback SSH tests use temporary host/client keys with strict known-host
+verification; Windows SSH runtime remains unqualified.
 
 ## Desktop Instance Model
 

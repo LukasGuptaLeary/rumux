@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use gpui::*;
 use gpui_terminal::{TerminalConfig, TerminalView};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -14,16 +14,25 @@ pub fn spawn_terminal_view_for_surface(
     cwd: Option<&Path>,
     id: uuid::Uuid,
 ) -> Result<Entity<TerminalView>> {
-    spawn_terminal_view_with_config(cx, cwd, None, None, None, Some(id))
+    spawn_terminal_view_with_config(cx, cwd, None, None, None, Some(id), None)
 }
 
-pub fn spawn_terminal_view_with_config(
+pub fn spawn_ssh_terminal_view(
+    cx: &mut App,
+    connection: &rumux_core::ssh::SshConnection,
+    id: uuid::Uuid,
+) -> Result<Entity<TerminalView>> {
+    spawn_terminal_view_with_config(cx, None, None, None, None, Some(id), Some(connection))
+}
+
+fn spawn_terminal_view_with_config(
     cx: &mut App,
     cwd: Option<&Path>,
     on_exit: Option<Box<dyn Fn(&mut Window, &mut App) + 'static>>,
     config_override: Option<&RumuxConfig>,
     output_callback: Option<Arc<dyn Fn(&[u8]) + Send + Sync>>,
     surface_id: Option<uuid::Uuid>,
+    ssh: Option<&rumux_core::ssh::SshConnection>,
 ) -> Result<Entity<TerminalView>> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
@@ -33,15 +42,25 @@ pub fn spawn_terminal_view_with_config(
         pixel_height: 0,
     })?;
 
-    let shell = default_shell();
+    let shell = if ssh.is_some() {
+        "ssh".to_string()
+    } else {
+        default_shell()
+    };
     let mut cmd = CommandBuilder::new(&shell);
+    if let Some(connection) = ssh {
+        let id = surface_id.context("SSH terminal requires a stable surface ID")?;
+        cmd.args(connection.arguments(&id.to_string())?);
+    }
     #[cfg(target_os = "macos")]
-    if matches!(
-        std::path::Path::new(&shell)
-            .file_name()
-            .and_then(|s| s.to_str()),
-        Some("zsh" | "bash" | "sh" | "fish")
-    ) {
+    if ssh.is_none()
+        && matches!(
+            std::path::Path::new(&shell)
+                .file_name()
+                .and_then(|s| s.to_str()),
+            Some("zsh" | "bash" | "sh" | "fish")
+        )
+    {
         cmd.arg("-l");
     }
     cmd.env("TERM", "xterm-256color");

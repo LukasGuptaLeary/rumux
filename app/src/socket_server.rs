@@ -45,6 +45,7 @@ struct WorkspaceTargetParams {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct WorkspaceCreateParams {
+    ssh: Option<rumux_core::ssh::SshConnection>,
     name: Option<String>,
 }
 
@@ -677,7 +678,12 @@ fn handle_request(
             };
 
             with_window_state(app_state, cx, move |window, state, cx| {
-                state.add_workspace_named(params.name.clone(), window, cx);
+                if let Some(connection) = params.ssh {
+                    connection.validate().map_err(|error| error.to_string())?;
+                    state.add_ssh_workspace(params.name.clone(), connection, window, cx);
+                } else {
+                    state.add_workspace_named(params.name.clone(), window, cx);
+                }
                 to_value(
                     state.workspaces[state.active_workspace_idx]
                         .read(cx)
@@ -1719,6 +1725,7 @@ struct SurfaceTextSnapshot {
     workspace_index: usize,
     workspace_name: String,
     surface_index: Option<usize>,
+    remote_posix: bool,
     text: String,
 }
 
@@ -1775,6 +1782,10 @@ fn surface_placeholder(
 ) -> crate::workspace::SurfaceSummary {
     crate::workspace::SurfaceSummary {
         kind: "terminal",
+        ssh: workspace
+            .ssh
+            .as_ref()
+            .map(|connection| connection.for_new_pane(None)),
         url: None,
         id: String::new(),
         status: rumux_core::status::SurfaceStatus::Idle,
@@ -1892,16 +1903,26 @@ fn parse_agent_command_output(
 ) -> Option<(String, Option<i32>)> {
     let (_, marker_end) = find_matching_line(search_text, |line| line == start_marker)?;
     let after_start = &search_text[marker_end..];
-    let (exit_start, exit_end) =
-        find_matching_line(after_start, |line| line.starts_with(exit_marker_prefix))?;
-    let output = after_start[..exit_start]
-        .trim_start_matches(['\r', '\n'])
-        .to_string();
-    let exit_code = after_start[exit_start..exit_end]
-        .trim_end_matches(['\r', '\n'])
-        .strip_prefix(exit_marker_prefix)
-        .and_then(|line| line.trim().parse::<i32>().ok());
-    Some((output, exit_code))
+    // A command such as `printf hello` leaves the exit marker on the same
+    // line as its last output. Accept only a complete numeric marker suffix;
+    // echoed wrapper source contains a quoted marker and is not completion.
+    let mut offset = 0;
+    for segment in after_start.split_inclusive('\n') {
+        let line = segment.trim_end_matches(['\r', '\n']);
+        if let Some(marker) = line.rfind(exit_marker_prefix) {
+            if let Ok(code) = line[marker + exit_marker_prefix.len()..]
+                .trim()
+                .parse::<i32>()
+            {
+                let output = after_start[..offset + marker]
+                    .trim_start_matches(['\r', '\n'])
+                    .to_string();
+                return Some((output, Some(code)));
+            }
+        }
+        offset += segment.len();
+    }
+    None
 }
 
 fn read_surface_text_snapshot(
@@ -1920,6 +1941,7 @@ fn read_surface_text_snapshot(
             workspace_index,
             workspace_name: workspace.name.clone(),
             surface_index: resolved_surface_index(&workspace, surface_index, &**cx),
+            remote_posix: workspace.ssh.is_some(),
             text,
         })
     })
@@ -2028,13 +2050,23 @@ async fn handle_surface_run_command(
     let token = Uuid::new_v4().simple().to_string();
     let start_marker = format!("__RUMUX_START_{token}__");
     let exit_marker_prefix = format!("__RUMUX_EXIT_{token}__:");
-    let wrapped = wrap_command_for_agent(&params.command, &start_marker, &exit_marker_prefix);
 
     let initial_snapshot =
         match read_surface_text_snapshot(app_state, cx, &params.target, SurfaceReadScope::Buffer) {
             Ok(snapshot) => snapshot,
             Err(error) => return RpcResponse::error(id, error),
         };
+
+    let wrapped = if initial_snapshot.remote_posix {
+        wrap_posix_command(
+            &params.command,
+            "/bin/sh",
+            &start_marker,
+            &exit_marker_prefix,
+        )
+    } else {
+        wrap_command_for_agent(&params.command, &start_marker, &exit_marker_prefix)
+    };
 
     let sent = with_state(app_state, cx, |state, cx| {
         let workspace_index = resolve_workspace_index(
@@ -2142,6 +2174,21 @@ fn resolved_surface_index(
     }
 }
 
+fn wrap_posix_command(
+    command: &str,
+    shell: &str,
+    start_marker: &str,
+    exit_marker_prefix: &str,
+) -> String {
+    let shell = shell_single_quote(shell);
+    let command = shell_single_quote(command);
+    let start_marker = shell_single_quote(start_marker);
+    let exit_marker_prefix = shell_single_quote(exit_marker_prefix);
+    format!(
+        "__rumux_restore_tty=$(stty -g 2>/dev/null || true); __rumux_restore() {{ if [ -n \"$__rumux_restore_tty\" ]; then stty \"$__rumux_restore_tty\" 2>/dev/null || stty echo 2>/dev/null || true; else stty echo 2>/dev/null || true; fi; }}; trap '__rumux_restore' EXIT INT TERM; stty -echo 2>/dev/null || true; printf '%s\\n' {start_marker}; {shell} -lc {command}; rumux_status=$?; printf '%s%s\\n' {exit_marker_prefix} \"$rumux_status\"; __rumux_restore; trap - EXIT INT TERM\n"
+    )
+}
+
 fn wrap_command_for_agent(command: &str, start_marker: &str, exit_marker_prefix: &str) -> String {
     #[cfg(windows)]
     {
@@ -2159,17 +2206,10 @@ fn wrap_command_for_agent(command: &str, start_marker: &str, exit_marker_prefix:
 
     #[cfg(not(windows))]
     {
-        let shell = shell_single_quote(&default_shell());
-        let command = shell_single_quote(command);
-        let start_marker = shell_single_quote(start_marker);
-        let exit_marker_prefix = shell_single_quote(exit_marker_prefix);
-        format!(
-            "__rumux_restore_tty=$(stty -g 2>/dev/null || true); __rumux_restore() {{ if [ -n \"$__rumux_restore_tty\" ]; then stty \"$__rumux_restore_tty\" 2>/dev/null || stty echo 2>/dev/null || true; else stty echo 2>/dev/null || true; fi; }}; trap '__rumux_restore' EXIT INT TERM; stty -echo 2>/dev/null || true; printf '%s\\n' {start_marker}; {shell} -lc {command}; rumux_status=$?; printf '%s%s\\n' {exit_marker_prefix} \"$rumux_status\"; __rumux_restore; trap - EXIT INT TERM\n"
-        )
+        wrap_posix_command(command, &default_shell(), start_marker, exit_marker_prefix)
     }
 }
 
-#[cfg(not(windows))]
 fn shell_single_quote(raw: &str) -> String {
     format!("'{}'", raw.replace('\'', "'\"'\"'"))
 }
@@ -2177,6 +2217,23 @@ fn shell_single_quote(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::token_matches;
+
+    #[test]
+    fn command_completion_handles_output_without_a_trailing_newline() {
+        let text = "echo '__start__'; printf '__exit__:' \"$status\"\n__start__\nhello__exit__:7\n";
+        assert_eq!(
+            super::parse_agent_command_output(text, "__start__", "__exit__:"),
+            Some(("hello".to_owned(), Some(7)))
+        );
+        assert_eq!(
+            super::parse_agent_command_output(
+                "__start__\n__exit__:' \"$status\"\n",
+                "__start__",
+                "__exit__:"
+            ),
+            None
+        );
+    }
 
     #[test]
     fn tcp_authentication_requires_the_complete_token() {

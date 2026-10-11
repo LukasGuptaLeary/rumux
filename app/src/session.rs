@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-const SESSION_SCHEMA_VERSION: u32 = 4;
+const SESSION_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -20,6 +20,7 @@ pub struct SessionData {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceSession {
+    pub ssh: Option<rumux_core::ssh::SshConnection>,
     pub id: Option<String>,
     pub name: String,
     pub cwd: String,
@@ -150,6 +151,7 @@ mod tests {
             window_height: 800.0,
             workspaces: vec![
                 WorkspaceSession {
+                    ssh: None,
                     id: None,
                     name: "Main".to_string(),
                     cwd: "/home/user".to_string(),
@@ -157,6 +159,7 @@ mod tests {
                     next_terminal_index: Some(1),
                 },
                 WorkspaceSession {
+                    ssh: None,
                     id: None,
                     name: "Dev".to_string(),
                     cwd: "/home/user/project".to_string(),
@@ -201,6 +204,7 @@ mod tests {
         let path = tmp.path().join("session.json");
         let first = SessionData::new(
             vec![WorkspaceSession {
+                ssh: None,
                 name: "first".into(),
                 ..Default::default()
             }],
@@ -208,6 +212,7 @@ mod tests {
         );
         let second = SessionData::new(
             vec![WorkspaceSession {
+                ssh: None,
                 name: "second".into(),
                 ..Default::default()
             }],

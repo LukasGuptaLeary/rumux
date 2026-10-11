@@ -9,7 +9,9 @@ use gpui_terminal::TerminalViewEvent;
 use rumux_core::status::SurfaceStatus;
 use rumux_core::terminal_protocol::{TerminalProtocolParser, TerminalSignal};
 
-use crate::terminal_surface::{spawn_terminal_view_for_surface, terminal_error_view};
+use crate::terminal_surface::{
+    spawn_ssh_terminal_view, spawn_terminal_view_for_surface, terminal_error_view,
+};
 
 /// A terminal panel that implements the Panel trait for use in DockArea.
 ///
@@ -17,6 +19,7 @@ use crate::terminal_surface::{spawn_terminal_view_for_surface, terminal_error_vi
 /// to focus the terminal when this panel becomes active.
 pub struct TerminalPanel {
     pub id: uuid::Uuid,
+    pub ssh: Option<rumux_core::ssh::SshConnection>,
     terminal: Entity<TerminalView>,
     name: Option<String>,
     index: usize,
@@ -65,11 +68,21 @@ impl TerminalPanel {
                                 }
                                 TerminalSignal::WorkingDirectory(path) => {
                                     if panel.cwd.as_deref() == Some(path)
-                                        || !std::path::Path::new(path).is_dir()
+                                        || (panel.ssh.is_none()
+                                            && !std::path::Path::new(path).is_dir())
+                                    {
+                                        continue;
+                                    }
+                                    if panel.ssh.is_some()
+                                        && (!path.starts_with('/')
+                                            || path.chars().any(char::is_control))
                                     {
                                         continue;
                                     }
                                     panel.cwd = Some(path.clone());
+                                    if let Some(connection) = &mut panel.ssh {
+                                        connection.directory = Some(path.clone());
+                                    }
                                 }
                                 _ => {}
                             }
@@ -87,6 +100,7 @@ impl TerminalPanel {
         );
         Self {
             id: uuid::Uuid::new_v4(),
+            ssh: None,
             terminal,
             name: None,
             index,
@@ -127,6 +141,19 @@ impl TerminalPanel {
             cx,
         );
         panel.id = id;
+        Ok(panel)
+    }
+
+    pub fn from_ssh(
+        connection: rumux_core::ssh::SshConnection,
+        index: usize,
+        id: uuid::Uuid,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<Self> {
+        let terminal = spawn_ssh_terminal_view(&mut **cx, &connection, id)?;
+        let mut panel = Self::new(terminal, index, connection.directory.clone(), cx);
+        panel.id = id;
+        panel.ssh = Some(connection);
         Ok(panel)
     }
 
@@ -196,7 +223,12 @@ impl TerminalPanel {
         self.name
             .clone()
             .or_else(|| self.terminal_title.clone())
-            .unwrap_or_else(|| format!("Terminal {}", self.index + 1))
+            .unwrap_or_else(|| {
+                self.ssh.as_ref().map_or_else(
+                    || format!("Terminal {}", self.index + 1),
+                    |connection| format!("SSH {}", connection.destination()),
+                )
+            })
     }
 
     pub fn terminal(&self) -> Entity<TerminalView> {
@@ -254,6 +286,7 @@ impl TerminalPanel {
         tab_panel: &Entity<TabPanel>,
         placement: Option<gpui_component::Placement>,
         cwd: Option<&str>,
+        ssh: Option<&rumux_core::ssh::SshConnection>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -264,7 +297,17 @@ impl TerminalPanel {
         let index = next_terminal_index(&dock_area, cx);
         let cwd_path = cwd.map(std::path::Path::new);
         let panel = cx.new(|cx| {
-            TerminalPanel::from_cwd(cwd_path, index, cx).unwrap_or_else(|error| {
+            let created = if let Some(ssh) = ssh {
+                TerminalPanel::from_ssh(
+                    ssh.for_new_pane(cwd.map(str::to_string)),
+                    index,
+                    uuid::Uuid::new_v4(),
+                    cx,
+                )
+            } else {
+                TerminalPanel::from_cwd(cwd_path, index, cx)
+            };
+            created.unwrap_or_else(|error| {
                 let term = terminal_error_view(&mut **cx, &error);
                 TerminalPanel::new(term, index, cwd.map(str::to_string), cx)
             })
@@ -329,8 +372,11 @@ impl Panel for TerminalPanel {
         let terminal = self.terminal.clone();
         let agent_command = crate::config::RumuxConfig::load().agent_command;
         let cwd_for_new = self.cwd.clone();
+        let ssh_for_new = self.ssh.clone();
         let cwd_for_split_right = self.cwd.clone();
+        let ssh_for_split_right = self.ssh.clone();
         let cwd_for_split_down = self.cwd.clone();
+        let ssh_for_split_down = self.ssh.clone();
         let tab_panel_for_new = self.tab_panel.clone();
         let tab_panel_for_split_right = self.tab_panel.clone();
         let tab_panel_for_split_down = self.tab_panel.clone();
@@ -354,6 +400,7 @@ impl Panel for TerminalPanel {
                                     &tab_panel,
                                     None,
                                     cwd_for_new.as_deref(),
+                                    ssh_for_new.as_ref(),
                                     window,
                                     cx,
                                 );
@@ -375,6 +422,7 @@ impl Panel for TerminalPanel {
                                     &tab_panel,
                                     Some(gpui_component::Placement::Right),
                                     cwd_for_split_right.as_deref(),
+                                    ssh_for_split_right.as_ref(),
                                     window,
                                     cx,
                                 );
@@ -396,6 +444,7 @@ impl Panel for TerminalPanel {
                                     &tab_panel,
                                     Some(gpui_component::Placement::Bottom),
                                     cwd_for_split_down.as_deref(),
+                                    ssh_for_split_down.as_ref(),
                                     window,
                                     cx,
                                 );
@@ -428,6 +477,7 @@ impl Panel for TerminalPanel {
             "name": self.name,
             "index": self.index,
             "cwd": self.cwd,
+            "ssh": self.ssh,
         }));
         state
     }
@@ -521,8 +571,11 @@ impl Render for TerminalPanel {
         let tab_panel_for_split_down = self.tab_panel.clone();
         let tab_panel_for_close = self.tab_panel.clone();
         let cwd_for_new = self.cwd.clone();
+        let ssh_for_new = self.ssh.clone();
         let cwd_for_split_right = self.cwd.clone();
+        let ssh_for_split_right = self.ssh.clone();
         let cwd_for_split_down = self.cwd.clone();
+        let ssh_for_split_down = self.ssh.clone();
         let panel_for_rename = panel.clone();
         let panel_for_close = panel.clone();
 
@@ -589,6 +642,7 @@ impl Render for TerminalPanel {
                         .on_click({
                             let tab_panel = tab_panel_for_new.clone();
                             let cwd = cwd_for_new.clone();
+                            let ssh = ssh_for_new.clone();
                             move |_event, window, cx| {
                                 if let Some(tab_panel) =
                                     tab_panel.as_ref().and_then(|tab_panel| tab_panel.upgrade())
@@ -597,6 +651,7 @@ impl Render for TerminalPanel {
                                         &tab_panel,
                                         None,
                                         cwd.as_deref(),
+                                        ssh.as_ref(),
                                         window,
                                         cx,
                                     );
@@ -610,6 +665,7 @@ impl Render for TerminalPanel {
                         .on_click({
                             let tab_panel = tab_panel_for_split_right.clone();
                             let cwd = cwd_for_split_right.clone();
+                            let ssh = ssh_for_split_right.clone();
                             move |_event, window, cx| {
                                 if let Some(tab_panel) =
                                     tab_panel.as_ref().and_then(|tab_panel| tab_panel.upgrade())
@@ -618,6 +674,7 @@ impl Render for TerminalPanel {
                                         &tab_panel,
                                         Some(gpui_component::Placement::Right),
                                         cwd.as_deref(),
+                                        ssh.as_ref(),
                                         window,
                                         cx,
                                     );
@@ -631,6 +688,7 @@ impl Render for TerminalPanel {
                         .on_click({
                             let tab_panel = tab_panel_for_split_down.clone();
                             let cwd = cwd_for_split_down.clone();
+                            let ssh = ssh_for_split_down.clone();
                             move |_event, window, cx| {
                                 if let Some(tab_panel) =
                                     tab_panel.as_ref().and_then(|tab_panel| tab_panel.upgrade())
@@ -639,6 +697,7 @@ impl Render for TerminalPanel {
                                         &tab_panel,
                                         Some(gpui_component::Placement::Bottom),
                                         cwd.as_deref(),
+                                        ssh.as_ref(),
                                         window,
                                         cx,
                                     );
@@ -721,13 +780,24 @@ pub fn register(cx: &mut App) {
                 } else {
                     uuid::Uuid::new_v4()
                 };
-                let mut p = TerminalPanel::from_cwd_with_id(cwd_path, index, id, cx)
-                    .unwrap_or_else(|error| {
-                        let term = terminal_error_view(cx, &error);
-                        let mut panel = TerminalPanel::new(term, index, cwd.clone(), cx);
-                        panel.id = id;
-                        panel
-                    });
+                let source = if let PanelInfo::Panel(ref value) = panel_state.info {
+                    value.get("ssh").filter(|value| !value.is_null()).cloned()
+                } else {
+                    None
+                };
+                let restored = if let Some(source) = source {
+                    serde_json::from_value::<rumux_core::ssh::SshConnection>(source)
+                        .map_err(anyhow::Error::from)
+                        .and_then(|connection| TerminalPanel::from_ssh(connection, index, id, cx))
+                } else {
+                    TerminalPanel::from_cwd_with_id(cwd_path, index, id, cx)
+                };
+                let mut p = restored.unwrap_or_else(|error| {
+                    let term = terminal_error_view(cx, &error);
+                    let mut panel = TerminalPanel::new(term, index, cwd.clone(), cx);
+                    panel.id = id;
+                    panel
+                });
                 p.set_name(name);
                 p
             });
