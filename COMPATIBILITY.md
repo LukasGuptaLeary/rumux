@@ -18,10 +18,10 @@ Notes:
 - Windows desktop support is an active validation target, not a compatibility promise yet.
 - The completion branch adds native build/test/smoke gates for Linux, macOS and
   Windows. A configured gate is not evidence that it has passed; Windows remains
-  unqualified: the initial runner passed Rust tests/build but failed a live shell
-  status check. The browser batch's subsequent run advanced through the terminal
-  checks but crashed during WebView2 construction. Its correction still requires
-  native Windows runtime validation.
+  unqualified: WebView2 construction and browser automation now pass, but
+  closing a terminal in a mixed browser layout still overflowed the main-thread
+  stack at `9ebc961`. The terminal-service batch requires a new native Windows
+  run, including Windows ACL and detach/cold-history checks.
 
 ## On-Disk State
 
@@ -40,6 +40,18 @@ Compatibility expectations:
   `invalid-<uuid>.json` file. If no valid backup exists, or the primary has a
   newer schema, the app reports the failure and disables session writes for that
   run so the original can be recovered.
+- A per-profile terminal service keeps PTYs running when the desktop exits.
+  Stable IDs reattach to the same processes. Explicit pane/workspace close
+  terminates those processes and removes stored history. `rumux session stop`
+  stops all processes in the selected profile and retains history.
+- Version 1 atomic history files retain bounded primary-screen cells, colors
+  and launch-directory metadata. A cold service restart starts fresh shells and
+  restores history; it does not resurrect dead processes. Changed history is
+  checkpointed every five seconds and at normal service shutdown.
+- Unsupported/corrupt history and incompatible live service protocols are
+  preserved and reported. `persist_scrollback = false` disables disk history
+  for newly started panes. Private Unix modes and Windows ACLs protect the
+  service directory and endpoint; Windows runtime qualification is pending.
 
 ## Worktree Layout Compatibility
 
@@ -69,16 +81,20 @@ Expectations:
   closes the previous unauthenticated loopback control path.
 
 SSH workspaces require an OpenSSH client and a remote shell accepting POSIX
-command syntax. SSH sessions currently reconnect after app restart. Layout
-restore does not preserve a running local or remote shell process. Linux/macOS
-loopback SSH tests use temporary host/client keys with strict known-host
-verification; Windows SSH runtime remains unqualified.
+command syntax. SSH clients, remote shell PIDs and forwarded listeners survive
+desktop restart while the terminal service remains running. A cold service
+restart creates fresh connections. Linux/macOS loopback SSH tests prove both
+lifecycles using temporary keys with strict known-host verification; Windows
+SSH runtime remains unqualified.
 
 ## Desktop Instance Model
 
 - `rumux-app` is intended to run as a single desktop instance per user-scoped IPC endpoint.
 - A second launch should activate the already-running instance and exit instead of opening a parallel shell window.
 - Alternate endpoints configured with `RUMUX_SOCKET_ADDR`, `RUMUX_SOCKET_PATH`, or `RUMUX_RUNTIME_DIR` are treated as separate instances for development and testing.
+- Terminal ownership is scoped by `RUMUX_CONFIG_DIR`; isolate it as well when
+  testing separate profiles. Multiple simultaneous GUI endpoints sharing a
+  config profile are not qualified.
 
 ## Release and Support Policy
 

@@ -9,6 +9,7 @@ import concurrent.futures
 import json
 import http.server
 import os
+import re
 from pathlib import Path
 import shlex
 import socket
@@ -59,6 +60,8 @@ def main():
         tcp = windows or args.tcp
         env["SHELL"] = "cmd.exe" if windows else "/bin/sh"
         env["RUMUX_SHELL"] = env["SHELL"]
+        env["RUMUX_TEST_APP"] = str(app)
+        env["RUMUX_TERMINAL_TRACE"] = "1"
         if tcp:
             with socket.socket() as probe:
                 probe.bind(("127.0.0.1", 0))
@@ -106,6 +109,9 @@ def main():
 
         def python_command(code):
             if windows:
+                # cmd.exe consumes physical newlines as Enter even inside a
+                # pasted command. Keep multiline fixture programs in one argument.
+                code = "exec(" + repr(code) + ")"
                 code = ("import ctypes; k=ctypes.windll.kernel32; "
                         "k.GetStdHandle.restype=ctypes.c_void_p; "
                         "k.GetConsoleMode.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_ulong)]; "
@@ -238,6 +244,10 @@ def main():
             assert rpc("workspace.current")["id"] != workspace_id, duplicate
             assert original_ids.isdisjoint({s["id"] for s in rpc("surface.list")["surfaces"]})
             checks.append("duplicated workspaces receive independent identities")
+            from terminal_service_checks import exercise_service
+            exercise_service(rpc, launch, stop, python_command, cli, env, root,
+                             config, windows, checks, eventually)
+
             if args.browser:
                 class Fixture(http.server.BaseHTTPRequestHandler):
                     def log_message(self, *args):
@@ -396,14 +406,27 @@ def main():
                     assert all(s["id"] not in [remote["id"],inherited["id"]] for s in copied_surfaces)
                     rpc("workspace.close", {"index":copy["index"]})
                     rpc("workspace.select", {"workspace_id":remote_id})
+                    from terminal_service_checks import service_rpc
+                    client_pid=next(p["pid"] for p in service_rpc(config,"list")["result"] if p["id"]==remote["id"])
+                    rpc("surface.send_text",dict(remote_target,text="printf 'REMOTE_SHELL_BEFORE_%s\\n' \"$$\"",append_newline=True))
+                    def remote_shell_pid(marker):
+                        text=rpc("surface.read",dict(remote_target,scope="buffer",max_chars=100000))["text"]
+                        matches=re.findall(marker+r"_(\d+)",text)
+                        return matches[-1] if matches else None
+                    remote_pid=eventually(lambda:remote_shell_pid("REMOTE_SHELL_BEFORE"))
                     stop()
+                    assert next(p["pid"] for p in service_rpc(config,"list")["result"] if p["id"]==remote["id"])==client_pid
+                    with socket.create_connection(("127.0.0.1",fixture.local_port),timeout=2):
+                        pass
                     launch()
                     rpc("workspace.select", {"workspace_id":remote_id})
                     restored = next(s for s in rpc("surface.list")["surfaces"] if s["id"] == remote["id"])
                     assert restored["ssh"]["directory"] == str(fixture.changed_directory)
                     result = rpc("surface.run_command", dict(remote_target, command="pwd", timeout_ms=10000))
                     assert result["completed"] and str(fixture.changed_directory) in result["output"], result
-                    checks.append("SSH identities, independent copies and restart reconnect")
+                    rpc("surface.send_text",dict(remote_target,text="printf 'REMOTE_SHELL_AFTER_%s\\n' \"$$\"",append_newline=True))
+                    assert eventually(lambda:remote_shell_pid("REMOTE_SHELL_AFTER"))==remote_pid
+                    checks.append("same SSH client, remote shell and forwarded listener across desktop restart")
                     rpc("workspace.close", {"workspace_id":remote_id})
                     def forwarding_closed():
                         try:
@@ -416,14 +439,25 @@ def main():
         except BaseException:
             try:
                 print(json.dumps({"surfaces":rpc("surface.list"),"last_terminal":rpc("surface.read",{"scope":"buffer","max_chars":4000})}, indent=2), file=sys.stderr)
+                for surface in rpc("surface.list")["surfaces"]:
+                    if surface["kind"] == "terminal":
+                        print(json.dumps(rpc("surface.read", {"surface_id":surface["id"],"scope":"buffer","max_chars":4000}), indent=2),file=sys.stderr)
             except (OSError,ValueError):
                 pass
+            service_log = config / "terminals" / "service.log"
+            if service_log.exists():
+                print(service_log.read_text(encoding="utf-8"),file=sys.stderr)
             stop()
             log.flush()
             print(log_path.read_text(encoding="utf-8"), file=sys.stderr)
             raise
         finally:
             stop()
+            if (config / "terminal-service.json").exists():
+                cleanup = subprocess.run([str(cli), "session", "stop"], env=env,
+                                         capture_output=True, text=True, timeout=10)
+                assert cleanup.returncode == 0, cleanup.stderr
+                eventually(lambda: not (config / "terminal-service.json").exists())
             log.close()
     print(json.dumps({"passed": checks, "elapsed_seconds": round(time.monotonic() - started, 2)}, indent=2))
 

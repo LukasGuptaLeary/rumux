@@ -34,6 +34,7 @@ pub struct TerminalPanel {
     pub status_message: Option<String>,
     pub unread: bool,
     protocol: TerminalProtocolParser,
+    notification_sequence: u64,
     _output_subscription: Subscription,
 }
 
@@ -89,10 +90,71 @@ impl TerminalPanel {
                             cx.emit(TerminalPanelEvent::Signal(signal));
                         }
                     }
+                    TerminalViewEvent::Metadata(metadata) => {
+                        if let Ok(metadata) = serde_json::from_value::<
+                            crate::terminal_service::Metadata,
+                        >(metadata.clone())
+                        {
+                            panel.status = metadata.status;
+                            panel.status_message = metadata.status_message;
+                            panel.terminal_title =
+                                (!metadata.title.is_empty()).then_some(metadata.title);
+                            if let Some(path) = metadata.cwd
+                                && panel.cwd.as_deref() != Some(&path)
+                                && ((panel.ssh.is_some()
+                                    && path.starts_with('/')
+                                    && !path.chars().any(char::is_control))
+                                    || (panel.ssh.is_none()
+                                        && std::path::Path::new(&path).is_dir()))
+                            {
+                                panel.cwd = Some(path.clone());
+                                if let Some(connection) = &mut panel.ssh {
+                                    connection.directory = Some(path.clone());
+                                }
+                                cx.emit(TerminalPanelEvent::Signal(
+                                    TerminalSignal::WorkingDirectory(path),
+                                ));
+                            }
+                            let has_notices = !metadata.notifications.is_empty();
+                            for notice in metadata.notifications {
+                                if notice.sequence > panel.notification_sequence {
+                                    cx.emit(TerminalPanelEvent::Signal(
+                                        TerminalSignal::Notification {
+                                            title: notice.title,
+                                            body: notice.body,
+                                        },
+                                    ));
+                                }
+                            }
+                            panel.notification_sequence = metadata.notification_sequence;
+                            if has_notices {
+                                let client = cx
+                                    .global::<crate::terminal_service::ServiceClient>()
+                                    .0
+                                    .clone();
+                                let id = panel.id;
+                                std::thread::spawn(move || {
+                                    let _ = client.call(
+                                        "ack",
+                                        serde_json::json!({
+                                            "id": id.to_string(),
+                                            "sequence": metadata.notification_sequence,
+                                        }),
+                                    );
+                                });
+                            }
+                        }
+                    }
                     TerminalViewEvent::Exited => {
                         panel.exited = true;
                         panel.status = SurfaceStatus::Exited;
                         cx.emit(TerminalPanelEvent::Exited);
+                    }
+                    TerminalViewEvent::Disconnected => {
+                        panel.status = SurfaceStatus::Blocked;
+                        panel.status_message = Some(
+                            "Terminal service disconnected. Reopen Rumux to reconnect.".into(),
+                        );
                     }
                 }
                 cx.notify();
@@ -115,6 +177,7 @@ impl TerminalPanel {
             status_message: None,
             unread: false,
             protocol: TerminalProtocolParser::default(),
+            notification_sequence: 0,
             _output_subscription: subscription,
         }
     }

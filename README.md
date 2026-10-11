@@ -12,7 +12,8 @@ The desktop shell uses Rust, GPUI and native docking primitives. Browser panes e
 - Git worktree orchestration for parallel development sessions
 - Native desktop terminal UI built with GPUI
 - Docked tabs, split panes, zoom, and multi-workspace sidebar
-- Restorable workspace layout and terminal launch directories
+- Restorable workspace layout, terminal history and launch directories
+- Local and SSH terminals keep running when the desktop closes
 - Local RPC endpoint for automation and editor or agent integration
 - MCP bridge for terminal and browser control over the running desktop app
 - Embedded browser tabs and splits with navigation, DOM inspection and form interaction
@@ -88,6 +89,8 @@ Current desktop support policy lives in [COMPATIBILITY.md](COMPATIBILITY.md).
 | `rumux completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
 | `rumux mcp` | Run a stdio MCP server for a running `rumux-app` instance |
 | `rumux ssh [user@]host [--cwd /remote/path] [-L local:remote]` | Open an SSH workspace in the running desktop app |
+| `rumux session status [--json]` | List processes owned by the profile's terminal service |
+| `rumux session stop` | Stop the profile's terminal service and its processes, retaining history |
 
 ## Typical Workflow
 
@@ -120,8 +123,8 @@ rumux includes a pure-Rust desktop application built on GPUI.
 - **Rendering:** GPUI for the shell and terminal; Wry hosts WKWebView on macOS, WebKitGTK on Linux, and WebView2 on Windows.
 - **Workspace shell:** `AppState -> Workspace -> DockArea -> TerminalPanel/BrowserPanel`
 - **Docking model:** `gpui-component` dock/tree primitives drive tabbed terminals, pane splits, and zoom state.
-- **Terminal runtime:** `portable-pty` + `alacritty_terminal` + `gpui-terminal`
-- **Persistence:** workspaces restore dock layout, pane IDs, terminal launch directories and browser URLs across restarts.
+- **Terminal runtime:** a per-profile headless service owns `portable-pty` processes and the authoritative `alacritty_terminal` parser; `gpui-terminal` renders parsed state in the desktop.
+- **Persistence:** workspaces restore dock layout, pane IDs, launch directories and browser URLs. Stable terminal IDs reattach to the same service-owned processes; a cold service restart restores prior primary-screen history into fresh shells.
 - **IPC:** Unix domain sockets on Unix by default, loopback TCP on non-Unix. Override with `RUMUX_SOCKET_PATH` or `RUMUX_SOCKET_ADDR`.
 - **Instance model:** one desktop app instance per user-scoped IPC endpoint. A second launch activates the primary instance and exits.
 
@@ -212,16 +215,47 @@ by OpenSSH.
 
 Remote POSIX shells export `TERM_PROGRAM=rumux` and their stable
 `RUMUX_SURFACE_ID`. OSC 7 directory updates are retained for subsequent tabs and
-splits. Connections and launch directories reconnect on restart. A forwarded
+splits. Connections, remote shells and forwards survive desktop exit while the
+terminal service remains running. A cold service restart reconnects using the
+saved connection and launch directory. A forwarded
 listener belongs to its original pane; new tabs and workspace copies do not
 bind it again, and closing that pane closes the listener. Forwarding binds only
 local loopback. The `create_ssh_workspace` MCP tool accepts a typed `ssh` object,
 also available through `workspace.create` RPC.
 
-Real connections, forwarding and reconnect are checked against an isolated
+Real connections, forwarding and process survival are checked against an isolated
 loopback server on macOS and Linux. Windows SSH runtime and remote shells that
-do not accept POSIX command syntax still require qualification. These are new
-connections after restart; current terminal processes do not survive app exit.
+do not accept POSIX command syntax still require qualification.
+
+### Terminal service and history
+
+Quitting the desktop detaches its views and leaves terminal processes running.
+Reopening the same profile reattaches to those processes, including active
+alternate screens, colors and output produced while the desktop was absent.
+Closing a pane or workspace explicitly stops its terminals and removes their
+stored history. Browser views are recreated when the desktop reopens.
+
+```bash
+rumux session status --json
+# Explicitly stop every terminal in the selected profile; reopen for fresh shells.
+rumux session stop
+```
+
+Scrollback is saved under `terminals/` in the Rumux config directory every five
+seconds when changed and when the service stops normally. A cold restart loads
+bounded prior primary-screen history; it starts fresh processes and clears old
+alternate-screen and input modes. Abrupt service or machine failure may lose
+output since the last checkpoint. Unsupported or damaged history is preserved
+and reported. An incompatible live service is preserved rather than replaced.
+
+History can contain secrets printed by terminal programs. To disable disk
+history for newly started panes, put `persist_scrollback = false` in
+`config.toml`; existing processes retain the setting they started with. Live
+memory scrollback still works. The service directory and files are restricted
+to the current user (Unix permissions or Windows ACLs). Its loopback protocol
+requires a private random token. The service supports 64 panes; each grid is
+bounded to 512 columns, 256 rows and 1,000,000 cells including up to 10,000
+history rows.
 
 ### MCP Integration
 

@@ -297,6 +297,7 @@ fn create_auth_token_at(path: &std::path::Path) -> anyhow::Result<String> {
     std::fs::create_dir_all(parent)?;
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    crate::terminal_service::protect_windows_path(file.path(), false)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

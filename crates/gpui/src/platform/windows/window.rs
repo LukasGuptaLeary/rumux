@@ -1205,12 +1205,30 @@ fn register_window_class(icon_handle: HICON) {
     });
 }
 
+#[cfg(debug_assertions)]
+std::thread_local! { static MESSAGE_DEPTH: Cell<usize> = const { Cell::new(0) }; }
+
+#[cfg(debug_assertions)]
+struct MessageDepthGuard;
+#[cfg(debug_assertions)]
+impl Drop for MessageDepthGuard {
+    fn drop(&mut self) { MESSAGE_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1))); }
+}
+
 unsafe extern "system" fn window_procedure(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    #[cfg(debug_assertions)]
+    let _depth_guard = {
+        let depth = MESSAGE_DEPTH.with(|depth| { let next=depth.get()+1; depth.set(next); next });
+        if depth == 32 && std::env::var_os("RUMUX_TERMINAL_TRACE").is_some() {
+            eprintln!("Nested Windows message {msg:#x}: {}", std::backtrace::Backtrace::force_capture());
+        }
+        MessageDepthGuard
+    };
     if msg == WM_NCCREATE {
         let window_params = lparam.0 as *const CREATESTRUCTW;
         let window_params = unsafe { &*window_params };

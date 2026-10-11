@@ -139,9 +139,8 @@ impl EventListener for GpuiEventProxy {
                 // For simplicity, we ignore the clipboard type and just store the data
                 self.send(TerminalEvent::ClipboardStore(data));
             }
-            Event::ClipboardLoad(_clipboard_type, _format) => {
-                // For simplicity, we ignore the clipboard type and format
-                self.send(TerminalEvent::ClipboardLoad);
+            event @ Event::ClipboardLoad(..) => {
+                self.send(TerminalEvent::Query(std::sync::Arc::new(event)))
             }
             Event::Exit => {
                 self.send(TerminalEvent::Exit);
@@ -242,11 +241,17 @@ mod tests {
         let proxy = GpuiEventProxy::new(tx);
 
         // ClipboardLoad requires a callback function
-        let callback = Arc::new(|s: &str| s.to_string());
+        let callback = Arc::new(|s: &str| format!("clipboard-reply({s})"));
         proxy.send_event(Event::ClipboardLoad(ClipboardType::Clipboard, callback));
 
         let event = rx.recv().unwrap();
-        assert!(matches!(event, TerminalEvent::ClipboardLoad));
+        match event {
+            TerminalEvent::Query(query) => match &*query {
+                Event::ClipboardLoad(_, format) => assert_eq!(format(""), "clipboard-reply()"),
+                _ => panic!("Expected clipboard query"),
+            },
+            _ => panic!("Expected query event"),
+        }
     }
 
     #[test]

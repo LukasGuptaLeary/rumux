@@ -19,7 +19,7 @@ Successful compilation on macOS does not establish Linux or Windows support.
 |---|---|---|
 | Terminal foundation | Scrollback, selection, paste, find, resize, terminal query replies, title/CWD updates and process cleanup work in real PTYs | Validated on macOS/Linux; Windows pending |
 | Workspace and agent workflow | Stable identities, metadata, pane notifications, unread navigation, directory inheritance, configurable commands and agent-independent CLI | Implemented; macOS/Linux proof recorded |
-| Session lifecycle | Atomic versioned saves, recovery, layout/CWD/scrollback restore, and an explicit detach/reattach lifecycle without silent process loss | Pending |
+| Session lifecycle | Atomic versioned saves, recovery, layout/CWD/scrollback restore, and an explicit detach/reattach lifecycle without silent process loss | macOS/Linux validated; Windows pending |
 | Browser and remote surfaces | Embedded browser beside terminal, navigation and agent automation; SSH workspaces and remote directory/port routing | Browser/SSH validated on macOS/Linux X11; Windows pending |
 | Cross-platform distribution | Build/test gates and desktop packages for all three OSes; fresh installation and startup/RPC smoke checks | Pending |
 | Release qualification | Tests, live UI/PTY checks and install evidence match one commit; limitations documented; user authorizes external publication | Pending |

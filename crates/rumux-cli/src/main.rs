@@ -129,6 +129,22 @@ enum Commands {
     Mcp,
     /// Open an SSH workspace in the running desktop app
     Ssh(commands::ssh::SshOptions),
+    /// Inspect or stop the profile's persistent terminal service
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionCommand {
+    /// List service-owned terminal processes, including detached panes
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop this profile's service and all of its terminal processes
+    Stop,
 }
 
 fn main() {
@@ -173,10 +189,41 @@ fn main() {
         } => commands::socket_client::run_raw(method, params, json),
         Commands::Mcp => commands::mcp::run(),
         Commands::Ssh(ref options) => commands::ssh::run(options),
+        Commands::Session { ref command } => run_session(command),
     };
 
     if let Err(e) = result {
         eprintln!("{} {e:#}", console::style("error:").red().bold());
         std::process::exit(1);
     }
+}
+
+fn run_session(command: &SessionCommand) -> anyhow::Result<()> {
+    let client = rumux_core::terminal_service::Client::discover()?;
+    match command {
+        SessionCommand::Status { json } => {
+            let processes = client.call("list", serde_json::json!({}))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&processes)?);
+            } else if let Some(processes) = processes.as_array() {
+                for process in processes {
+                    println!(
+                        "{}  pid={}  {}",
+                        process["id"].as_str().unwrap_or("?"),
+                        process["pid"],
+                        if process["exited"] == true {
+                            "exited"
+                        } else {
+                            "running"
+                        }
+                    );
+                }
+            }
+        }
+        SessionCommand::Stop => {
+            client.call("stop", serde_json::json!({}))?;
+            eprintln!("Stopped terminal service for this profile.");
+        }
+    }
+    Ok(())
 }

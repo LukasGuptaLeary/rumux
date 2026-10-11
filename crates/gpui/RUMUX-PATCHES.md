@@ -23,6 +23,11 @@ keeps the parent valid if the user closes the window during construction and
 releases it when construction finishes. Other platforms retain their default
 window lifecycle.
 
+Debug builds additionally trace a deeply nested Windows message dispatch when
+`RUMUX_TERMINAL_TRACE` is set. It records a backtrace without changing message
+handling or the stack limit, to diagnose the mixed-pane close failure in native
+CI. Release builds do not include this diagnostic.
+
 Use the registry-normalized `Cargo.toml` so all other dependencies keep their
 published versions. `Cargo.toml.orig` remains upstream provenance. Remove this
 patch when a qualified published GPUI version provides these handles.

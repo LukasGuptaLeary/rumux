@@ -8,3 +8,4 @@ pub mod runtime;
 pub mod ssh;
 pub mod status;
 pub mod terminal_protocol;
+pub mod terminal_service;

@@ -16,6 +16,7 @@ mod sidebar;
 mod socket_server;
 mod ssh_dialog;
 mod terminal_panel;
+mod terminal_service;
 mod terminal_surface;
 mod theme;
 mod workspace;
@@ -26,6 +27,13 @@ use app_state::AppState;
 use root_view::*;
 
 fn main() {
+    if std::env::args().any(|argument| argument == "--terminal-service") {
+        if let Err(error) = terminal_service::run() {
+            eprintln!("Terminal service failed: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     #[cfg(target_os = "windows")]
     // This runs before any application threads are created. Native child
     // WebView2 windows need GPUI's HWND composition path.
@@ -39,6 +47,13 @@ fn main() {
         Ok(None) => return,
         Err(error) => {
             eprintln!("Failed to start rumux: {error}");
+            std::process::exit(1);
+        }
+    };
+    let terminal_client = match terminal_service::ensure_started() {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("Failed to start rumux: {error:#}");
             std::process::exit(1);
         }
     };
@@ -64,6 +79,7 @@ fn main() {
     let app = application.with_assets(gpui_component_assets::Assets);
 
     app.run(move |cx| {
+        cx.set_global(terminal_service::ServiceClient(terminal_client));
         gpui_component::init(cx);
         gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
 

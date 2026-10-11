@@ -97,6 +97,13 @@ impl AppState {
             return;
         }
 
+        for surface in self.workspaces[idx].read(cx).list_surfaces(cx) {
+            if surface.kind == "terminal"
+                && let Ok(id) = uuid::Uuid::parse_str(&surface.id)
+            {
+                crate::terminal_surface::close_owned(id, cx);
+            }
+        }
         self.workspaces.remove(idx);
         self.notifications
             .retain(|notification| notification.workspace_id != idx);

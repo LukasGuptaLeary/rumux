@@ -90,6 +90,7 @@ pub struct Workspace {
     next_terminal_index: usize,
     _dock_subscription: Subscription,
     panel_subscriptions: Vec<(EntityId, Subscription)>,
+    owned_terminal_ids: std::collections::HashSet<Uuid>,
 }
 
 impl Workspace {
@@ -213,6 +214,7 @@ impl Workspace {
             next_terminal_index: next_terminal_index.unwrap_or(1).max(1),
             _dock_subscription: dock_subscription,
             panel_subscriptions: Vec::new(),
+            owned_terminal_ids: std::collections::HashSet::new(),
         };
         workspace.track_terminal_panels(cx);
         workspace
@@ -224,6 +226,12 @@ impl Workspace {
             .into_iter()
             .map(|target| target.panel)
             .collect();
+        let current: std::collections::HashSet<_> =
+            panels.iter().map(|panel| panel.read(cx).id).collect();
+        for id in self.owned_terminal_ids.difference(&current) {
+            crate::terminal_surface::close_owned(*id, cx);
+        }
+        self.owned_terminal_ids = current;
         self.panel_subscriptions
             .retain(|(id, _)| panels.iter().any(|panel| panel.entity_id() == *id));
         for panel in panels {
@@ -568,6 +576,18 @@ impl Workspace {
         let Some(target) = self.resolve_surface_target(surface_index, cx) else {
             return false;
         };
+        let client = cx
+            .global::<crate::terminal_service::ServiceClient>()
+            .0
+            .clone();
+        let id = target.panel.read(cx).id;
+        let service_message = message.clone();
+        std::thread::spawn(move || {
+            let _ = client.call(
+                "status",
+                serde_json::json!({"id":id.to_string(),"status":status,"message":service_message}),
+            );
+        });
         target.panel.update(cx, |panel, cx| {
             panel.status = if panel.exited {
                 rumux_core::status::SurfaceStatus::Exited

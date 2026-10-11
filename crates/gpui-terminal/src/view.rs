@@ -401,9 +401,11 @@ pub struct TerminalView {
     /// Async task that reads bytes and notifies the view (push-based)
     #[allow(dead_code)]
     _reader_task: Task<()>,
+    mirrored: bool,
 
     /// Callback to notify the PTY about size changes
     resize_callback: Option<Arc<ResizeCallback>>,
+    pixel_resize_callback: Option<Arc<dyn Fn(usize, usize, u16, u16) + Send + Sync>>,
 
     /// Optional callback to intercept key events before terminal processing
     key_handler: Option<Arc<KeyHandler>>,
@@ -439,7 +441,14 @@ pub struct TerminalView {
 #[derive(Clone, Debug)]
 pub enum TerminalViewEvent {
     Output(Vec<u8>),
+    Metadata(serde_json::Value),
+    Disconnected,
     Exited,
+}
+
+enum ViewFrame {
+    Bytes(Vec<u8>),
+    Mirror(crate::mirror::MirrorUpdate),
 }
 
 impl EventEmitter<TerminalViewEvent> for TerminalView {}
@@ -487,6 +496,42 @@ impl TerminalView {
         W: Write + Send + 'static,
         R: Read + Send + 'static,
     {
+        let (frames_tx, frames_rx) = flume::bounded(64);
+        thread::spawn(move || Self::read_stdout_blocking(stdout_reader, frames_tx));
+        Self::from_frames(stdin_writer, config, frames_rx, false, cx)
+    }
+
+    /// Attach a read-only render mirror; terminal parsing and replies belong to the service.
+    pub fn new_mirror<W>(
+        stdin_writer: W,
+        updates: std::sync::mpsc::Receiver<crate::mirror::MirrorUpdate>,
+        config: TerminalConfig,
+        cx: &mut Context<Self>,
+    ) -> Self
+    where
+        W: Write + Send + 'static,
+    {
+        let (frames_tx, frames_rx) = flume::bounded(2);
+        thread::spawn(move || {
+            while let Ok(update) = updates.recv() {
+                if frames_tx.send(ViewFrame::Mirror(update)).is_err() {
+                    break;
+                }
+            }
+        });
+        Self::from_frames(stdin_writer, config, frames_rx, true, cx)
+    }
+
+    fn from_frames<W>(
+        stdin_writer: W,
+        config: TerminalConfig,
+        frames_rx: flume::Receiver<ViewFrame>,
+        mirrored: bool,
+        cx: &mut Context<Self>,
+    ) -> Self
+    where
+        W: Write + Send + 'static,
+    {
         // Create event channel for terminal events
         let (event_tx, event_rx) = mpsc::channel();
 
@@ -520,35 +565,48 @@ impl TerminalView {
             Box::new(stdin_writer) as Box<dyn Write + Send>
         ));
 
-        // Create async channel for bytes (push-based notification)
-        // Using flume instead of smol::channel because flume is executor-agnostic
-        // and properly wakes GPUI's async executor when data arrives
-        let (bytes_tx, bytes_rx) = flume::bounded::<Vec<u8>>(64);
-
-        // Spawn background thread to read from stdout
-        // This thread sends bytes through the async channel
-        thread::spawn(move || {
-            Self::read_stdout_blocking(stdout_reader, bytes_tx);
-        });
-
         // Spawn async task that awaits on the channel and notifies the view
         // This is push-based: the task blocks until bytes arrive, then immediately notifies
         let reader_task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             loop {
                 // Wait for bytes from the background reader (blocks until data arrives)
-                match bytes_rx.recv_async().await {
-                    Ok(bytes) => {
+                match frames_rx.recv_async().await {
+                    Ok(frame) => {
                         // Process bytes, invoke output callback, and notify the view
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                            if let Some(ref cb) = view.output_callback {
-                                cb(&bytes);
+                            match frame {
+                                ViewFrame::Bytes(bytes) => {
+                                    if let Some(ref cb) = view.output_callback {
+                                        cb(&bytes);
+                                    }
+                                    view.state.process_bytes(&bytes);
+                                    view.reply_to_terminal_queries();
+                                    cx.emit(TerminalViewEvent::Output(bytes));
+                                }
+                                ViewFrame::Mirror(update) => {
+                                    if let Err(error) = update.packet.apply(&mut view.state) {
+                                        eprintln!("Unable to apply terminal snapshot: {error:#}");
+                                        return;
+                                    }
+                                    cx.emit(TerminalViewEvent::Metadata(update.metadata));
+                                    if update.bell && view.pending_events.len() < 256 {
+                                        view.pending_events.push(TerminalEvent::Bell);
+                                    }
+                                    for text in update.clipboard.into_iter().take(16) {
+                                        if view.pending_events.len() >= 256 {
+                                            break;
+                                        }
+                                        view.pending_events
+                                            .push(TerminalEvent::ClipboardStore(text));
+                                    }
+                                    if update.exited {
+                                        cx.emit(TerminalViewEvent::Exited);
+                                    }
+                                }
                             }
-                            view.state.process_bytes(&bytes);
                             if !view.search_query.is_empty() {
                                 view.refresh_search();
                             }
-                            view.reply_to_terminal_queries();
-                            cx.emit(TerminalViewEvent::Output(bytes));
                             cx.notify();
                         });
                         if result.is_err() {
@@ -558,10 +616,16 @@ impl TerminalView {
                     }
                     Err(_) => {
                         // Channel closed - PTY has finished, send Exit event
-                        let _ = exit_event_tx.send(TerminalEvent::Exit);
+                        if !mirrored {
+                            let _ = exit_event_tx.send(TerminalEvent::Exit);
+                        }
                         // Notify view to process the Exit event
                         let _ = this.update(cx, |_view, cx: &mut Context<Self>| {
-                            cx.emit(TerminalViewEvent::Exited);
+                            if !mirrored {
+                                cx.emit(TerminalViewEvent::Exited);
+                            } else {
+                                cx.emit(TerminalViewEvent::Disconnected);
+                            }
                             cx.notify();
                         });
                         break;
@@ -578,7 +642,9 @@ impl TerminalView {
             event_rx,
             config,
             _reader_task: reader_task,
+            mirrored,
             resize_callback: None,
+            pixel_resize_callback: None,
             key_handler: None,
             bell_callback: None,
             title_callback: None,
@@ -911,6 +977,15 @@ impl TerminalView {
         self
     }
 
+    /// Report measured cell size for terminal window-size protocol replies.
+    pub fn with_pixel_resize_callback(
+        mut self,
+        callback: impl Fn(usize, usize, u16, u16) + Send + Sync + 'static,
+    ) -> Self {
+        self.pixel_resize_callback = Some(Arc::new(callback));
+        self
+    }
+
     /// Set a callback to intercept key events before terminal processing.
     ///
     /// The callback receives the key event and should return `true` to consume
@@ -1063,7 +1138,7 @@ impl TerminalView {
     /// when data arrives (push-based).
     fn read_stdout_blocking<R: Read + Send + 'static>(
         mut stdout_reader: R,
-        bytes_tx: flume::Sender<Vec<u8>>,
+        bytes_tx: flume::Sender<ViewFrame>,
     ) {
         let mut buffer = [0u8; 4096];
 
@@ -1076,7 +1151,7 @@ impl TerminalView {
                 Ok(n) => {
                     // Send bytes to the async task
                     let bytes = buffer[..n].to_vec();
-                    if bytes_tx.send(bytes).is_err() {
+                    if bytes_tx.send(ViewFrame::Bytes(bytes)).is_err() {
                         break; // Channel closed
                     }
                 }
@@ -1325,6 +1400,7 @@ impl TerminalView {
                                 cell_height: f32::from(metrics.cell_height).round() as u16,
                             })
                         }
+                        alacritty_terminal::event::Event::ClipboardLoad(_, format) => format(""),
                         _ => String::new(),
                     };
                     self.write_to_pty(reply.as_bytes());
@@ -1476,10 +1552,12 @@ impl Render for TerminalView {
         let state_arc = self.state.term_arc();
         let renderer = self.renderer.clone();
         let resize_callback = self.resize_callback.clone();
+        let pixel_resize_callback = self.pixel_resize_callback.clone();
         let padding = self.config.padding;
         let metrics_for_canvas = self.cell_metrics.clone();
         let search_matches = self.search_matches.clone();
         let search_active = self.search_active;
+        let mirrored = self.mirrored;
 
         let bg = self.renderer.palette.resolve(
             alacritty_terminal::vte::ansi::Color::Named(
@@ -1515,8 +1593,12 @@ impl Render for TerminalView {
                         let cell_width_f32: f32 = measured_renderer.cell_width.into();
                         let cell_height_f32: f32 = measured_renderer.cell_height.into();
 
-                        let cols = ((available_width / cell_width_f32) as usize).max(1);
-                        let rows = ((available_height / cell_height_f32) as usize).max(1);
+                        let mut cols = ((available_width / cell_width_f32) as usize).max(2);
+                        let mut rows = ((available_height / cell_height_f32) as usize).max(1);
+                        if mirrored {
+                            cols = cols.min(crate::mirror::MAX_COLUMNS);
+                            rows = rows.min(crate::mirror::MAX_ROWS);
+                        }
 
                         // Helper struct implementing Dimensions for resize
                         struct TermSize {
@@ -1548,12 +1630,29 @@ impl Render for TerminalView {
                         let mut term = state_arc.lock();
                         let current_cols = term.columns();
                         let current_rows = term.screen_lines();
+                        let metrics_changed = {
+                            let metrics = metrics_for_canvas.lock();
+                            metrics.cell_width != measured_renderer.cell_width
+                                || metrics.cell_height != measured_renderer.cell_height
+                        };
+                        if cols != current_cols || rows != current_rows || metrics_changed {
+                            if let Some(callback) = &pixel_resize_callback {
+                                callback(
+                                    cols,
+                                    rows,
+                                    cell_width_f32.round().clamp(1.0, 1024.0) as u16,
+                                    cell_height_f32.round().clamp(1.0, 1024.0) as u16,
+                                );
+                            }
+                        }
                         if cols != current_cols || rows != current_rows {
                             // Notify the PTY about the resize
                             if let Some(ref callback) = resize_callback {
                                 callback(cols, rows);
                             }
-                            term.resize(TermSize { cols, rows });
+                            if !mirrored {
+                                term.resize(TermSize { cols, rows });
+                            }
                         }
 
                         // Update cell metrics for mouse coordinate conversion

@@ -205,3 +205,52 @@ and Linux ARM64 each passed 129 workspace tests and 28 doctests, plus the full
 Durable terminal ownership, Windows browser qualification, SSH workflows and three-platform installation proof
 remain required. Any product claim must distinguish configured gates from
 executed results, and restored layout from a still-running terminal process.
+
+## Durable terminal ownership checkpoint
+
+The terminal service now owns PTYs and the authoritative Alacritty parser
+independently of the desktop. Stable pane UUIDs reattach to existing processes;
+pane/workspace removal explicitly closes them off the GUI thread. CLI commands
+`session status` and `session stop` expose the lifecycle. Parsed, validated cell
+snapshots and history deltas preserve colors, fragmented escapes and active
+alternate screens. Query replies continue while the GUI is absent. The service
+retains title/CWD/status and acknowledges delivered pane notifications.
+
+Private, atomic version 1 checkpoints retain bounded primary-screen history.
+Cold restart launches fresh processes with that history and fresh input modes.
+`persist_scrollback = false` opts newly started panes out of disk storage.
+Unsupported and corrupt files are rejected and preserved, as are incompatible
+live service protocols. Transport limits, grid limits, private endpoint
+authentication, process locking and Windows ACL handling are documented in
+`terminal-service-design.md`.
+
+macOS ARM64 and Linux ARM64 passed 135 workspace tests and 28 doctests (28
+existing illustrative doctests ignored). Both passed the full browser/SSH and
+service suites over Unix sockets and authenticated TCP, now 33/34 checks.
+They prove the same local shell PID, service PID, SSH client PID, remote shell
+PID and forwarded listener across desktop restart; a detached background job;
+exactly-once delivery of a retained notification; input after reattach;
+alternate-screen/fragmented-CSI state; colored history after cold restart;
+unsupported/corrupt history preservation; disabled disk persistence and
+explicit close cleanup. A delayed-frame regression exercises the macOS
+accepted-socket nonblocking inheritance correction. Windows fixture programs
+encode multiline Python within one command argument for cmd.exe.
+
+The local Alacritty 0.25.1 patch adds three narrow grid/render accessors and
+retains all upstream source, Apache-2.0 license, provenance and reference
+fixtures. Its separate upstream suite passed 132 unit tests, 45 reference tests
+and one doctest. The Linux final code snapshot has SHA-256
+`44c946780c1ab1ea2dc39c2ccef180170ae0840485504f2ba6dc32aee11910ea`;
+image ID remains
+`sha256:1ff5dbac0e7e0489f48a914ab063717b4b9a900cd39b683525d9e97d54f5d474`.
+Formatting, whitespace, Python compilation and Clippy checks completed; existing
+workspace/upstream warnings remain.
+
+In [CI run 38171519402](https://github.com/LukasGuptaLeary/rumux/actions/runs/38171519402)
+at `9ebc961`, Linux/macOS, CLI/core, formatting and Linux packaging passed.
+Windows still overflowed the main-thread stack when closing a terminal in a
+mixed browser layout. Bounds/visibility caching did not resolve that defect.
+The service batch moves PTY shutdown off the GUI and adds opt-in debug window
+message-depth diagnostics without raising the stack limit or weakening the
+test. Its Windows acceptance, Windows SSH and three-platform installation
+qualification remain open until native execution supplies evidence.
