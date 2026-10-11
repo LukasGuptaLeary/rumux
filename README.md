@@ -67,9 +67,32 @@ Desktop release artifacts:
 
 - `rumux-desktop-x86_64-unknown-linux-gnu.tar.gz`
 - `rumux-desktop-aarch64-apple-darwin.zip`
+- `rumux-desktop-x86_64-pc-windows-msvc.zip`
 - `rumux-desktop-checksums.txt`
 
-Those assets ship the current desktop binary in a release-ready archive format. They are not yet native installers, signed bundles, or distro packages.
+The completion branch packages the desktop and CLI together, with icons,
+licenses, source metadata and checksums. Download a matching desktop archive
+and `rumux-desktop-checksums.txt`, verify its checksum and extract it. From the
+extracted package directory, install for your user:
+
+```bash
+# macOS: ~/Applications/Rumux.app; Linux: ~/.local/share/rumux
+sh ./install-desktop.sh
+# Optional isolated install location on either platform
+sh ./install-desktop.sh --prefix /absolute/install/directory
+```
+
+```powershell
+# Windows: %LOCALAPPDATA%\Rumux, user PATH and a Start-menu shortcut
+powershell -ExecutionPolicy Bypass -File .\install-desktop.ps1
+```
+
+The installers verify the extracted files before installation. Close the
+desktop and run `rumux session stop` before replacing running binaries. Config
+and history live separately from the installation. Bundles are unsigned;
+macOS notarization, Windows signing and distro-specific packages remain future
+distribution work. The existing `v0.1.0` release contains CLI assets only; these
+desktop packages require a future qualified release.
 
 Current desktop support policy lives in [COMPATIBILITY.md](COMPATIBILITY.md).
 

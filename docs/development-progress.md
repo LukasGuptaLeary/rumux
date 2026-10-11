@@ -254,3 +254,50 @@ The service batch moves PTY shutdown off the GUI and adds opt-in debug window
 message-depth diagnostics without raising the stack limit or weakening the
 test. Its Windows acceptance, Windows SSH and three-platform installation
 qualification remain open until native execution supplies evidence.
+
+## Native installation checkpoint
+
+The desktop archive now includes the CLI, native app/icon metadata, installers,
+licenses, source commit/dirty-state metadata and per-file/archive checksums.
+macOS installs a bundle and CLI links; Linux installs its binaries, icons and
+desktop entry with an absolute quoted executable; Windows installs per user
+with optional PATH and Start-menu integration. Installers reject changed files
+before creating an installation and leave profile data outside it.
+
+Local macOS ARM64 and Linux ARM64 release archives were extracted and installed
+into owned directories containing spaces. The installed CLI and desktop then
+passed 33 Unix-socket and 34 authenticated-TCP browser/SSH/service checks.
+macOS took 9.57/8.99 s; Linux took 8.35/8.02 s. The macOS archive SHA-256 is
+`5c6e9a11701c61fb1f711c85c7bdd936ed4f2020a68665441d2cd31f48802536`;
+Linux is `0b5f9353bbe64d5118050d67d0d793a490726a148fb4988b17818fb5ef869507`.
+They record base commit `7895852` plus an explicitly dirty packaging tree;
+Linux also records frozen source archive SHA-256
+`07b8cbcc609bc799f70c705282722948b8d8b2a515aaa91d6e9ebba5fe294159`.
+The cold Linux optimized build took 4 min 51 s; the repeat reused the same Cargo
+target volume. Older Python 3.11 lacks tarfile's extraction filter; the package
+test now validates ordinary-file/directory members before extracting. Shell
+syntax, Python compilation, actionlint and whitespace checks passed.
+
+CI now qualifies installed optimized packages independently of debug builds on
+Linux x86-64, macOS ARM64 and Windows x86-64. The desktop release workflow also
+includes Windows and requires native install checks before upload. No release
+workflow was dispatched; no tag or release was published. The existing
+`v0.1.0` release contains CLI archives for all three platforms.
+
+In [CI run 38174606832](https://github.com/LukasGuptaLeary/rumux/actions/runs/38174606832)
+at `7895852`, Linux desktop/service/SSH passed. Windows passed service lifecycle
+checks but still overflowed its stack closing a terminal in a mixed browser
+layout; moving PTY shutdown off the GUI did not resolve it. macOS passed service
+checks but an inherited SSH pane's `pwd` completion marker disappeared although
+its output and prompt were visible. Forty local optimized SSH split/resize
+repetitions passed. Failure diagnostics now compare authoritative daemon cells
+with the view, and an opt-in Windows GDB/PDB trace captures the close failure
+without changing stack limits, terminal behavior or required tests. Windows ACL
+checks explicitly verify that the owned directory, endpoint and history grant
+access only to the current user.
+
+Failed native jobs previously discarded dependency caches and repeatedly spent
+about seven minutes rebuilding Windows before the same crash. Cache-on-failure
+now preserves dependency artifacts while Cargo still validates source/dependency
+hashes and every native test continues to run. Windows browser/SSH and hosted
+installed-package acceptance remain open.

@@ -12,6 +12,7 @@ import os
 import re
 from pathlib import Path
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -89,6 +90,46 @@ def main():
         log_path = root / "desktop.log"
         log = log_path.open("w+", encoding="utf-8")
         process = None
+        debugger = None
+        debugger_log = None
+        debugger_finished = False
+        debugger_path = root / "debugger.log"
+
+        def finish_debugger():
+            nonlocal debugger_finished
+            if debugger is None or debugger_finished:
+                return
+            try:
+                debugger.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                debugger.terminate()
+                debugger.wait(timeout=5)
+            debugger_log.flush()
+            trace = debugger_path.read_text(encoding="utf-8", errors="replace")
+            print(trace, file=sys.stderr)
+            from windows_stack import symbolize
+            try:
+                print(symbolize(app, trace), file=sys.stderr)
+            except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as error:
+                print(f"Native stack symbolization failed: {error}", file=sys.stderr)
+            debugger_finished = True
+
+        def trace_mixed_layout_close():
+            nonlocal debugger, debugger_log
+            if not windows or not os.environ.get("RUMUX_TRACE_WINDOWS_CLOSE"):
+                return
+            candidates = [shutil.which("gdb"), r"C:\msys64\mingw64\bin\gdb.exe",
+                          r"C:\msys64\ucrt64\bin\gdb.exe"]
+            gdb = next((path for path in candidates if path and Path(path).is_file()), None)
+            assert gdb, "Native Windows close diagnostics require the runner's GDB"
+            debugger_log = debugger_path.open("w", encoding="utf-8")
+            debugger = subprocess.Popen([gdb, "--batch", "--nx", "-q", str(app),
+                "-ex", "set pagination off", "-ex", "set confirm off",
+                "-ex", "set print frame-arguments none", "-ex", "set print thread-events off",
+                "-ex", f"attach {process.pid}", "-ex", "echo RUMUX_DEBUGGER_ATTACHED\\n",
+                "-ex", "continue", "-ex", "info sharedlibrary", "-ex", "info files",
+                "-ex", "thread apply all bt 120", "-ex", "detach"], stdout=debugger_log, stderr=debugger_log)
+            eventually(lambda: "RUMUX_DEBUGGER_ATTACHED" in debugger_path.read_text(encoding="utf-8", errors="replace"))
 
         def launch():
             nonlocal process
@@ -313,6 +354,7 @@ def main():
                         rpc("surface.rename", dict(browser_target, name="Preview tab"))
                         terminal = rpc("surface.split", dict(browser_target, placement="down"))["created"]
                         assert terminal["kind"] == "terminal" and terminal["id"] != browser["id"]
+                        trace_mixed_layout_close()
                         rpc("surface.close", {"surface_id":terminal["id"]})
                         tab = rpc("surface.create", browser_target)["created"]
                         eventually(lambda: not rpc("browser.state", browser_target)["visible"])
@@ -437,11 +479,17 @@ def main():
                     eventually(forwarding_closed)
                     checks.append("SSH pane ownership closes its forwarded listener")
         except BaseException:
+            finish_debugger()
             try:
                 print(json.dumps({"surfaces":rpc("surface.list"),"last_terminal":rpc("surface.read",{"scope":"buffer","max_chars":4000})}, indent=2), file=sys.stderr)
                 for surface in rpc("surface.list")["surfaces"]:
                     if surface["kind"] == "terminal":
                         print(json.dumps(rpc("surface.read", {"surface_id":surface["id"],"scope":"buffer","max_chars":4000}), indent=2),file=sys.stderr)
+                        from terminal_service_checks import service_rpc, packet_text
+                        snapshot = service_rpc(config, "poll", {"id": surface["id"]})["result"]
+                        print(json.dumps({"daemon_surface_id":surface["id"],
+                            "daemon_cursor":snapshot["packet"]["cursor"],
+                            "daemon_text":packet_text(snapshot["packet"])[-4000:]}, indent=2),file=sys.stderr)
             except (OSError,ValueError):
                 pass
             service_log = config / "terminals" / "service.log"
@@ -452,6 +500,9 @@ def main():
             print(log_path.read_text(encoding="utf-8"), file=sys.stderr)
             raise
         finally:
+            finish_debugger()
+            if debugger_log is not None:
+                debugger_log.close()
             stop()
             if (config / "terminal-service.json").exists():
                 cleanup = subprocess.run([str(cli), "session", "stop"], env=env,

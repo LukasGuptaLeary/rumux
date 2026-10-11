@@ -27,6 +27,12 @@ python3 scripts/smoke-desktop.py
 # Embedded browser and real loopback SSH integration (requires OpenSSH server)
 python3 scripts/smoke-desktop.py --browser --ssh
 
+# Native archive + isolated per-user installation proof
+bash scripts/package-desktop.sh
+python3 scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-<target>.zip
+# Local macOS packaging without a precompiled Metal toolchain
+RUMUX_BUILD_FEATURES=runtime-shaders bash scripts/package-desktop.sh
+
 # Install from the current checkout
 cargo install --path crates/rumux-cli
 cp target/release/rumux-app ~/.cargo/bin/

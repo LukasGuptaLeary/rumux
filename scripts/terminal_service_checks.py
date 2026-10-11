@@ -46,6 +46,20 @@ def packet_text(packet):
                      for row in packet["history"] + packet["screen"])
 
 
+def assert_windows_private(path):
+    # Read only ACL identities/rights; never emit file or token contents.
+    script = ("$ErrorActionPreference='Stop'; "
+              "$owner=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; "
+              "$acl=Get-Acl -LiteralPath $env:RUMUX_TEST_PRIVATE_PATH; "
+              "$rules=$acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]); "
+              "if (@($rules).Count -eq 0) { throw 'Missing owner access rule' }; "
+              "foreach ($rule in $rules) { if ($rule.AccessControlType -eq 'Allow' "
+              "-and $rule.IdentityReference.Value -ne $owner) { throw 'Unexpected allowed identity' } }")
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", script],
+        env=dict(os.environ, RUMUX_TEST_PRIVATE_PATH=str(path)), capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def exercise_service(rpc, launch, stop, python_command, cli, env, root, config,
                      windows, checks, eventually):
     workspace = rpc("workspace.create", {"name": "service lifecycle"})
@@ -69,6 +83,9 @@ def exercise_service(rpc, launch, stop, python_command, cli, env, root, config,
     service_rpc(config, "ping", protocol=2, error=True)
     assert service_rpc(config, "ping", fragmented=True)["result"]["pid"] == service_pid
     endpoint = json.loads((config / "terminal-service.json").read_text(encoding="utf-8"))
+    if windows:
+        assert_windows_private(config / "terminal-service.json")
+        assert_windows_private(config / "terminals")
     host, port = endpoint["address"].rsplit(":", 1)
     with socket.create_connection((host, int(port)), timeout=3) as idle:
         started = time.monotonic()
@@ -205,6 +222,8 @@ def exercise_service(rpc, launch, stop, python_command, cli, env, root, config,
     if not windows:
         assert history.stat().st_mode & 0o777 == 0o600
         assert history.parent.stat().st_mode & 0o777 == 0o700
+    else:
+        assert_windows_private(history)
     launch()
     assert process_id() != shell_pid
     assert service_rpc(config, "ping")["result"]["pid"] != service_pid

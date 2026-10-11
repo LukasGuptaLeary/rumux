@@ -48,6 +48,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Linux prerequisites
         if: runner.os == 'Linux'
         run: sudo bash scripts/install-linux-deps.sh
@@ -65,15 +67,41 @@ jobs:
           python3 scripts/smoke-desktop.py --browser --ssh --tcp
       - name: Desktop PTY smoke test (Windows)
         if: runner.os == 'Windows'
+        env:
+          RUMUX_TRACE_WINDOWS_CLOSE: '1'
         run: python scripts/smoke-desktop.py --app target/debug/rumux-app.exe --cli target/debug/rumux.exe --browser
 
   desktop-package:
-    name: Desktop Package Smoke Test (Linux)
-    runs-on: ubuntu-latest
+    name: Installed Desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: bash -n scripts/package-desktop.sh
-      - run: sudo bash scripts/install-linux-deps.sh
-      - run: ./scripts/package-desktop.sh
+        with:
+          key: installed-desktop
+          cache-on-failure: true
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: sudo bash scripts/install-linux-deps.sh
+      - name: Package desktop and CLI
+        shell: bash
+        run: bash scripts/package-desktop.sh
+      - name: Install and exercise package (Linux)
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a python3 scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-x86_64-unknown-linux-gnu.tar.gz --ssh
+      - name: Install and exercise package (macOS)
+        if: runner.os == 'macOS'
+        run: python3 scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-aarch64-apple-darwin.zip --ssh
+      - name: Install and exercise package (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-x86_64-pc-windows-msvc.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          path: dist/desktop/artifacts/*
+          if-no-files-found: error

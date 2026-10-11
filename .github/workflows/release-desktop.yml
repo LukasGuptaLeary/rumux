@@ -55,6 +55,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - runner: macos-14
             target: aarch64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,6 +80,18 @@ jobs:
           set -euo pipefail
           chmod +x scripts/package-desktop.sh
           TARGET="${{ matrix.target }}" BUILD_TARGET="${{ matrix.target }}" ./scripts/package-desktop.sh
+
+      - name: Qualify installed package (Linux)
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a python3 scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.tar.gz --ssh
+
+      - name: Qualify installed package (macOS)
+        if: runner.os == 'macOS'
+        run: python3 scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.zip --ssh
+
+      - name: Qualify installed package (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.zip
 
       - uses: actions/upload-artifact@v4
         with:

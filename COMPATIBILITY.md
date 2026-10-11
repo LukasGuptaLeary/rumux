@@ -6,15 +6,19 @@ This document defines the current compatibility and support expectations for `ru
 
 | Surface | Linux x86_64 | macOS Apple Silicon | Windows x86_64 |
 |---------|---------------|---------------------|----------------|
-| CLI release binaries | Supported | Not yet published through releases | Supported via release zip |
+| CLI release binaries | Supported | Supported | Supported via release zip |
 | CLI source build | Supported | Supported | Supported |
 | Desktop source build | Validated | Validated | Build/tests passed; runtime qualification pending |
-| Desktop release artifacts | Supported (`tar.gz`) | Supported (`.app` zip) | Not yet published |
+| Desktop package implementation | `tar.gz` with user installer | `.app` zip with user installer | Zip with PowerShell installer; native qualification pending |
 
 Notes:
 
 - Linux desktop builds require the GPUI display libraries plus GTK 3 and WebKitGTK 4.1. Browser panes require an X11/XWayland parent; Rumux selects it when `DISPLAY` is available. `RUMUX_LINUX_BACKEND=wayland` retains the native Wayland terminal shell with an explicit browser-unavailable message.
 - macOS desktop release artifacts are currently unsigned and not notarized.
+- Windows packages are unsigned and require WebView2 Runtime. Installers include
+  both desktop and CLI, verify extracted file hashes, and leave config/history
+  outside the installation. The published `v0.1.0` release has CLI assets only;
+  desktop packages await a future qualified release.
 - Windows desktop support is an active validation target, not a compatibility promise yet.
 - The completion branch adds native build/test/smoke gates for Linux, macOS and
   Windows. A configured gate is not evidence that it has passed; Windows remains
@@ -22,6 +26,10 @@ Notes:
   closing a terminal in a mixed browser layout still overflowed the main-thread
   stack at `9ebc961`. The terminal-service batch requires a new native Windows
   run, including Windows ACL and detach/cold-history checks.
+- Native package gates extract and install into owned directories with spaces,
+  reject tampered files, validate metadata, launch the installed CLI/desktop and
+  exercise its terminal service, browser and (Linux/macOS) SSH. They run
+  independently of debug-build checks; both are required acceptance evidence.
 
 ## On-Disk State
 
