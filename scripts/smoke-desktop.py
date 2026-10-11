@@ -517,6 +517,27 @@ def main():
             checks.append("bounded completion receipts in the authoritative service")
         except BaseException:
             finish_debugger()
+            if windows and debugger is None and os.environ.get("RUMUX_TRACE_WINDOWS_CLOSE") and process is not None and process.poll() is None:
+                # Capture startup hangs too, before any diagnostic RPC waits or
+                # teardown. The normal layout debugger attaches later in the suite.
+                candidates = [r"C:\msys64\mingw64\bin\gdb.exe", r"C:\msys64\ucrt64\bin\gdb.exe", shutil.which("gdb")]
+                gdb = next((path for path in candidates if path and Path(path).is_file()), None)
+                if gdb:
+                    commands = root / "startup-failure.gdb"
+                    commands.write_text("\n".join([
+                        "set pagination off", "set confirm off", "set print frame-arguments none",
+                        "set print thread-events off", 'file "' + app.as_posix() + '"',
+                        f"attach {process.pid}", "info sharedlibrary", "info files",
+                        "thread apply all bt 120", "detach", ""
+                    ]), encoding="utf-8")
+                    try:
+                        result = subprocess.run([gdb, "--batch", "--nx", "-q", "--command=" + commands.as_posix()], capture_output=True, text=True, timeout=20)
+                        trace = result.stdout + result.stderr
+                        print(trace, file=sys.stderr)
+                        from windows_stack import symbolize
+                        print(symbolize(app, trace), file=sys.stderr)
+                    except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as error:
+                        print(f"Startup stack diagnostics failed: {error}", file=sys.stderr)
             try:
                 print(json.dumps({"surfaces":rpc("surface.list"),"last_terminal":rpc("surface.read",{"scope":"buffer","max_chars":4000})}, indent=2), file=sys.stderr)
                 for surface in rpc("surface.list")["surfaces"]:

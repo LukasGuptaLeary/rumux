@@ -490,3 +490,31 @@ SSH, CLI or service behavior. The normal native CI barrier also applies to it.
 The earlier UI-test recovery snapshots were copied byte-for-byte to a permanent,
 private evidence archive outside the repository. The temporary originals and
 actual profile files remain preserved; no automatic restoration was attempted.
+
+The final documentation head `c96e395` passed macOS and Linux but reopened native
+Windows qualification. Its debug browser's first snapshot stalled during startup;
+the installed SSH command had a completion receipt while its screen still lacked
+the last output lines. Command capture now waits for the visible exit boundary
+before using a receipt; at the existing deadline a receipt can still report
+completed with an incomplete capture. A deterministic regression covers an early
+receipt, the later complete screen, and a mismatched exit boundary. Browser
+evaluation rejects loading pages immediately, and opt-in native creation/load
+traces plus an early-failure native stack capture distinguish startup hangs from
+navigation callbacks. The native time limits and required platform gates are
+unchanged. This correction requires fresh final-head Windows qualification; the
+passing `32b0ad32` checkpoint does not substitute for it.
+
+The correction passed 140 workspace tests and 28 doctests on macOS/Linux ARM64.
+macOS installed suites passed 36/37 checks in 10.41/10.05 s; its archive SHA-256
+is `9b2ca07629881687e726606eff58510dc29f378df83adc5ef6a1228455c202b3`.
+Linux installed suites passed 36/37 checks in 8.12/7.98 s; its archive SHA-256
+is `6512784d423acb8b92ffed815854c983a02a56aa71e2cf3b72938e1097ee5583`.
+The frozen Linux source archive is
+`3bcda5436f4832a3e5045bed5d1c96813b4d9354b1c64700fa0b29e462955e52`.
+Both manifests name base `c96e395` plus the dirty correction tree. The initial
+Linux invocation omitted the source-to-cache target link, then its display
+wrapper stalled before launching Rumux. Restoring the link and reusing the
+owned display completed the same installed barrier without rebuilding or
+weakening assertions. Clippy, Python compilation, rustfmt and actionlint passed.
+Final native evidence is recorded on PR #9 and in the local package qualification
+manifest so recording a CI run does not recursively require another source edit.

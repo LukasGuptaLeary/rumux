@@ -1939,6 +1939,7 @@ fn command_output_with_receipt(
     start_marker: &str,
     exit_marker_prefix: &str,
     receipt: Option<i32>,
+    allow_incomplete: bool,
 ) -> Option<(String, Option<i32>, bool)> {
     if let Some((output, code)) =
         parse_agent_command_output(search_text, start_marker, exit_marker_prefix)
@@ -1946,13 +1947,17 @@ fn command_output_with_receipt(
         return Some((output, code, false));
     }
     let code = receipt?;
-    // Completion survives screen/history erasure. Without both visible
-    // boundaries, report the remaining buffer as an incomplete capture.
+    // ConPTY can forward an OSC receipt before publishing its final screen
+    // update. Wait for the visible exit boundary, even when the start boundary
+    // was erased. At the caller's deadline a receipt still proves completion,
+    // but the remaining buffer must be reported as an incomplete capture.
     let observed = after_agent_start_marker(search_text, start_marker)
         .unwrap_or_else(|| search_text.to_string());
-    let output = before_agent_exit_marker(&observed, exit_marker_prefix)
-        .map(|(text, _)| text)
-        .unwrap_or_else(|| observed.trim_end().to_string());
+    let output = match before_agent_exit_marker(&observed, exit_marker_prefix) {
+        Some((text, Some(visible_code))) if visible_code == code => text,
+        _ if allow_incomplete => observed.trim_end().to_string(),
+        _ => return None,
+    };
     Some((output, Some(code), true))
 }
 
@@ -2147,6 +2152,7 @@ async fn handle_surface_run_command(
                 .iter()
                 .find(|(completed, _)| completed == &token)
                 .map(|(_, code)| *code),
+            started.elapsed().as_millis() as u64 >= timeout_ms,
         ) {
             let (text, truncated) = trim_text_tail(output, params.max_chars);
             return RpcResponse::success(
@@ -2277,7 +2283,8 @@ mod tests {
                 "remaining\n__exit__:7\nprompt",
                 "__start__",
                 "__exit__:",
-                Some(7)
+                Some(7),
+                false
             ),
             Some(("remaining\n".into(), Some(7), true))
         );
@@ -2286,12 +2293,47 @@ mod tests {
                 "__start__\nremaining",
                 "__start__",
                 "__exit__:",
-                Some(7)
+                Some(7),
+                true
             ),
             Some(("remaining".into(), Some(7), true))
         );
         assert_eq!(
-            super::command_output_with_receipt("remaining", "__start__", "__exit__:", None),
+            super::command_output_with_receipt("remaining", "__start__", "__exit__:", None, true),
+            None
+        );
+    }
+
+    #[test]
+    fn command_receipt_waits_for_the_final_screen_update() {
+        assert_eq!(
+            super::command_output_with_receipt(
+                "__start__\nfirst line",
+                "__start__",
+                "__exit__:",
+                Some(0),
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            super::command_output_with_receipt(
+                "__start__\nfirst line\nlast line\n__exit__:0\nprompt",
+                "__start__",
+                "__exit__:",
+                Some(0),
+                false
+            ),
+            Some(("first line\nlast line\n".into(), Some(0), false))
+        );
+        assert_eq!(
+            super::command_output_with_receipt(
+                "remaining\n__exit__:1\n",
+                "__start__",
+                "__exit__:",
+                Some(0),
+                false
+            ),
             None
         );
     }

@@ -141,7 +141,10 @@ impl BrowserView {
                         let mut context = WebContext::new(Some(
                             rumux_core::runtime::rumux_config_dir().join("browser"),
                         ));
-                        build_native(&initial_url, sender, &parent, &mut context)
+                        trace_browser("native creation started");
+                        let native = build_native(&initial_url, sender, &parent, &mut context);
+                        trace_browser("native creation finished");
+                        native
                     }
                     None => Err(anyhow::anyhow!("Native browser parent is unavailable")),
                 };
@@ -175,6 +178,11 @@ impl BrowserView {
                                 }
                                 NativeEvent::Page(event, url) => {
                                     view.loading = matches!(event, wry::PageLoadEvent::Started);
+                                    trace_browser(if view.loading {
+                                        "page loading"
+                                    } else {
+                                        "page loaded"
+                                    });
                                     view.address
                                         .update(cx, |input, cx| input.set_value(&url, window, cx));
                                     view.url = url;
@@ -245,6 +253,7 @@ impl BrowserView {
     }
 
     pub fn evaluate(&self, expression: &str) -> Result<flume::Receiver<String>> {
+        anyhow::ensure!(!self.loading, "Browser page is loading");
         anyhow::ensure!(
             expression.len() <= 64 * 1024,
             "Browser expression exceeds 64 KiB"
@@ -258,8 +267,10 @@ impl BrowserView {
             .as_ref()
             .context("Browser engine is unavailable")?
             .evaluate_script_with_callback(&script, move |result| {
+                trace_browser("evaluation callback");
                 let _ = sender.try_send(result);
             })?;
+        trace_browser("evaluation dispatched");
         Ok(receiver)
     }
 
@@ -342,6 +353,12 @@ impl BrowserView {
 
     pub fn summary(&self) -> Value {
         json!({"url":self.url,"title":self.title,"loading":self.loading,"error":self.error,"visible":self.selected && self.allowed})
+    }
+}
+
+fn trace_browser(event: &str) {
+    if std::env::var_os("RUMUX_TERMINAL_TRACE").is_some() {
+        eprintln!("browser {event}");
     }
 }
 
