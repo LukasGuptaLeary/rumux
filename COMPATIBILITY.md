@@ -9,7 +9,7 @@ This document defines the current compatibility and support expectations for `ru
 | CLI release binaries | Supported | Supported | Supported via release zip |
 | CLI source build | Supported | Supported | Supported |
 | Desktop source build | Validated | Validated | Build/tests passed; runtime qualification pending |
-| Desktop package implementation | `tar.gz` with user installer | `.app` zip with user installer | Zip with PowerShell installer; native qualification pending |
+| Desktop package implementation | `tar.gz` with user installer | `.app` zip with user installer | Zip with PowerShell installer; installed checks passed, SSH pending |
 
 Notes:
 
@@ -23,12 +23,14 @@ Notes:
 - The completion branch adds native build/test/smoke gates for Linux, macOS and
   Windows. A configured gate is not evidence that it has passed; Windows remains
   unqualified: WebView2 construction and browser automation now pass, but
-  closing a terminal in a mixed browser layout still overflowed the main-thread
-  stack at `9ebc961`. The terminal-service batch requires a new native Windows
-  run, including Windows ACL and detach/cold-history checks.
+  the debug build still overflows during mixed-layout rendering at `9cfb02a`.
+  The optimized installed package passed browser, ACL, detach and cold-history
+  checks at that head. A rendering-boundary stack guard and native Windows SSH
+  fixture require a new complete Windows run.
 - Native package gates extract and install into owned directories with spaces,
   reject tampered files, validate metadata, launch the installed CLI/desktop and
-  exercise its terminal service, browser and (Linux/macOS) SSH. They run
+  exercise its terminal service, browser and SSH. Windows SSH uses the native
+  Windows client against an isolated WSL1 POSIX target. These gates run
   independently of debug-build checks; both are required acceptance evidence.
 
 ## On-Disk State

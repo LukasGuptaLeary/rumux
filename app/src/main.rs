@@ -21,12 +21,33 @@ mod terminal_surface;
 mod theme;
 mod workspace;
 
+// Exercise the exact vendored rendering guard in the workspace test barrier;
+// Cargo does not run dev-dependency tests for a patched external package.
+#[cfg(test)]
+#[path = "../../crates/gpui/src/render_stack.rs"]
+mod render_stack_checks;
+
 use gpui::*;
 
 use app_state::AppState;
 use root_view::*;
 
 fn main() {
+    let arguments: Vec<_> = std::env::args().collect();
+    if arguments.get(1).map(String::as_str) == Some("--terminal-complete") {
+        let result = (|| -> anyhow::Result<()> {
+            anyhow::ensure!(
+                arguments.len() == 4,
+                "Expected a command token and exit status"
+            );
+            terminal_service::emit_completion(&arguments[2], arguments[3].parse()?)
+        })();
+        if let Err(error) = result {
+            eprintln!("Terminal completion failed: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if std::env::args().any(|argument| argument == "--terminal-service") {
         if let Err(error) = terminal_service::run() {
             eprintln!("Terminal service failed: {error:#}");

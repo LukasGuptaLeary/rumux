@@ -20,8 +20,14 @@ class WslSshFixture(SshFixture):
         self.remote_python = "python3"
 
     def remote(self, script, *, check=True):
-        return subprocess.run(["wsl.exe", "-d", self.distribution, "-u", "root", "--exec", "/bin/sh", "-s"],
-            input=script, text=True, capture_output=True, check=check, timeout=15)
+        # Byte input preserves POSIX LF instead of Windows text-pipe CRLF.
+        result = subprocess.run(["wsl.exe", "-d", self.distribution, "-u", "root", "--exec", "/bin/sh", "-s"],
+            input=script.encode("utf-8"), capture_output=True, timeout=15)
+        result.stdout = result.stdout.decode("utf-8")
+        result.stderr = result.stderr.decode("utf-8", errors="replace")
+        if check:
+            result.check_returncode()
+        return result
 
     def start(self):
         self.root.mkdir()

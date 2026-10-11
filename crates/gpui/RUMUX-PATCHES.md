@@ -28,6 +28,17 @@ Debug builds additionally trace a deeply nested Windows message dispatch when
 handling or the stack limit, to diagnose the mixed-pane close failure in native
 CI. Release builds do not include this diagnostic.
 
+`src/view.rs`, `src/element.rs` and `src/render_stack.rs` check available stack
+before typed/erased views and one-shot components render.
+The existing div layout checks cover recursion, but debug toolbar builders can
+consume more than their default 128 KiB margin before reaching another div.
+The Windows native trace stops in a terminal toolbar's element allocation;
+local debug prologues reserve about 118 KiB for its suffix and 129 KiB for the
+dock title bar. The rendering boundary uses stacker's existing same-thread
+segments with a 512 KiB margin and 2 MiB allocation. It leaves the main-thread
+stack limit unchanged. A small-stack regression nests large finite render
+frames through this exact boundary. Keep the native debug layout check enabled.
+
 Use the registry-normalized `Cargo.toml` so all other dependencies keep their
 published versions. `Cargo.toml.orig` remains upstream provenance. Remove this
 patch when a qualified published GPUI version provides these handles.

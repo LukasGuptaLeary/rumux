@@ -442,6 +442,11 @@ def main():
                     result = rpc("surface.run_command", {"surface_id":inherited["id"],"command":"pwd","timeout_ms":10000})
                     assert result["completed"] and str(fixture.changed_directory) in result["output"], result
                     checks.append("remote directory inheritance and independent SSH splits")
+                    erased = rpc("surface.run_command", {"surface_id": inherited["id"],
+                        "command": "printf '\\033[2J\\033[3J\\033[HREMOTE_ERASED_OUTPUT\\n'; exit 7", "timeout_ms": 10000})
+                    assert erased["completed"] and erased["exit_code"] == 7 and erased["truncated"], erased
+                    assert "REMOTE_ERASED_OUTPUT" in erased["output"], erased
+                    checks.append("remote command completion survives screen/history erasure")
 
                     preview = None
                     if args.browser:
@@ -485,6 +490,31 @@ def main():
                             return True
                     eventually(forwarding_closed)
                     checks.append("SSH pane ownership closes its forwarded listener")
+            completion_workspace = rpc("workspace.create", {"name": "erased command completion"})
+            pane = rpc("surface.list")["surfaces"][0]
+            # Native cls clears the viewport, whereas POSIX CSI 3J also erases
+            # scrollback. Inspect the receipt independently on both platforms.
+            erase = "cls & echo ERASED_OUTPUT & cmd.exe /c exit 7" if windows else "printf '\\033[2J\\033[3J\\033[HERASED_OUTPUT\\n'; exit 7"
+            erased = rpc("surface.run_command", {"surface_id": pane["id"], "command": erase, "timeout_ms": 10000})
+            assert erased["completed"] and erased["exit_code"] == 7, erased
+            assert "ERASED_OUTPUT" in erased["output"], erased
+            if not windows:
+                assert erased["truncated"], erased
+            from terminal_service_checks import service_rpc
+            def receipts():
+                return service_rpc(config, "poll", {"id": pane["id"]})["result"]["metadata"]["completed_commands"]
+            receipt = eventually(receipts)
+            assert len(receipt) == 1 and receipt[0][1] == 7, receipt
+            assert re.fullmatch(r"[0-9a-f]{32}", receipt[0][0]), receipt
+            flood = "import sys;sys.stdout.write(''.join('\\x1b]777;rumux-command;%032x;0\\x07'%i for i in range(20)));sys.stdout.flush();print('BOUNDED_RECEIPTS')"
+            bounded = rpc("surface.run_command", {"surface_id": pane["id"], "command": python_command(flood), "timeout_ms": 10000})
+            assert bounded["completed"] and bounded["exit_code"] == 0, bounded
+            retained = eventually(lambda: receipts() if len(receipts()) == 16 else None)
+            assert "0" * 32 not in [token for token, _ in retained], retained
+            assert "%032x" % 19 in [token for token, _ in retained], retained
+            rpc("workspace.close", {"workspace_id": completion_workspace["id"]})
+            checks.append("local command completion receipt after clear")
+            checks.append("bounded completion receipts in the authoritative service")
         except BaseException:
             finish_debugger()
             try:

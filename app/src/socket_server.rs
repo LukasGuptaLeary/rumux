@@ -1276,7 +1276,7 @@ fn handle_request(
             let start_marker = format!("__RUMUX_START_{token}__");
             let exit_marker_prefix = format!("__RUMUX_EXIT_{token}__:");
             let wrapped =
-                wrap_command_for_agent(&params.command, &start_marker, &exit_marker_prefix);
+                wrap_command_for_agent(&params.command, &start_marker, &exit_marker_prefix, &token);
 
             let initial_snapshot = match read_surface_text_snapshot(
                 app_state,
@@ -1727,6 +1727,7 @@ struct SurfaceTextSnapshot {
     workspace_name: String,
     surface_index: Option<usize>,
     remote_posix: bool,
+    completed_commands: Vec<(String, i32)>,
     text: String,
 }
 
@@ -1904,6 +1905,13 @@ fn parse_agent_command_output(
 ) -> Option<(String, Option<i32>)> {
     let (_, marker_end) = find_matching_line(search_text, |line| line == start_marker)?;
     let after_start = &search_text[marker_end..];
+    before_agent_exit_marker(after_start, exit_marker_prefix)
+}
+
+fn before_agent_exit_marker(
+    after_start: &str,
+    exit_marker_prefix: &str,
+) -> Option<(String, Option<i32>)> {
     // A command such as `printf hello` leaves the exit marker on the same
     // line as its last output. Accept only a complete numeric marker suffix;
     // echoed wrapper source contains a quoted marker and is not completion.
@@ -1926,6 +1934,28 @@ fn parse_agent_command_output(
     None
 }
 
+fn command_output_with_receipt(
+    search_text: &str,
+    start_marker: &str,
+    exit_marker_prefix: &str,
+    receipt: Option<i32>,
+) -> Option<(String, Option<i32>, bool)> {
+    if let Some((output, code)) =
+        parse_agent_command_output(search_text, start_marker, exit_marker_prefix)
+    {
+        return Some((output, code, false));
+    }
+    let code = receipt?;
+    // Completion survives screen/history erasure. Without both visible
+    // boundaries, report the remaining buffer as an incomplete capture.
+    let observed = after_agent_start_marker(search_text, start_marker)
+        .unwrap_or_else(|| search_text.to_string());
+    let output = before_agent_exit_marker(&observed, exit_marker_prefix)
+        .map(|(text, _)| text)
+        .unwrap_or_else(|| observed.trim_end().to_string());
+    Some((output, Some(code), true))
+}
+
 fn read_surface_text_snapshot(
     app_state: &WeakEntity<AppState>,
     cx: &mut AsyncApp,
@@ -1943,6 +1973,7 @@ fn read_surface_text_snapshot(
             workspace_name: workspace.name.clone(),
             surface_index: resolved_surface_index(&workspace, surface_index, &**cx),
             remote_posix: workspace.ssh.is_some(),
+            completed_commands: workspace.surface_command_completions(surface_index, &**cx),
             text,
         })
     })
@@ -2064,9 +2095,10 @@ async fn handle_surface_run_command(
             "/bin/sh",
             &start_marker,
             &exit_marker_prefix,
+            &token,
         )
     } else {
-        wrap_command_for_agent(&params.command, &start_marker, &exit_marker_prefix)
+        wrap_command_for_agent(&params.command, &start_marker, &exit_marker_prefix, &token)
     };
 
     let sent = with_state(app_state, cx, |state, cx| {
@@ -2106,9 +2138,16 @@ async fn handle_surface_run_command(
 
         let search_text = text_since_snapshot(&initial_snapshot.text, &snapshot.text);
 
-        if let Some((output, exit_code)) =
-            parse_agent_command_output(&search_text, &start_marker, &exit_marker_prefix)
-        {
+        if let Some((output, exit_code, incomplete)) = command_output_with_receipt(
+            &search_text,
+            &start_marker,
+            &exit_marker_prefix,
+            snapshot
+                .completed_commands
+                .iter()
+                .find(|(completed, _)| completed == &token)
+                .map(|(_, code)| *code),
+        ) {
             let (text, truncated) = trim_text_tail(output, params.max_chars);
             return RpcResponse::success(
                 id,
@@ -2122,7 +2161,7 @@ async fn handle_surface_run_command(
                     "elapsed_ms": started.elapsed().as_millis() as u64,
                     "exit_code": exit_code,
                     "output": text,
-                    "truncated": truncated,
+                    "truncated": truncated || incomplete,
                 }),
             );
         }
@@ -2180,34 +2219,46 @@ fn wrap_posix_command(
     shell: &str,
     start_marker: &str,
     exit_marker_prefix: &str,
+    token: &str,
 ) -> String {
     let shell = shell_single_quote(shell);
     let command = shell_single_quote(command);
     let start_marker = shell_single_quote(start_marker);
     let exit_marker_prefix = shell_single_quote(exit_marker_prefix);
     format!(
-        "__rumux_restore_tty=$(stty -g 2>/dev/null || true); __rumux_restore() {{ if [ -n \"$__rumux_restore_tty\" ]; then stty \"$__rumux_restore_tty\" 2>/dev/null || stty echo 2>/dev/null || true; else stty echo 2>/dev/null || true; fi; }}; trap '__rumux_restore' EXIT INT TERM; stty -echo 2>/dev/null || true; printf '%s\\n' {start_marker}; {shell} -lc {command}; rumux_status=$?; printf '%s%s\\n' {exit_marker_prefix} \"$rumux_status\"; __rumux_restore; trap - EXIT INT TERM\n"
+        "__rumux_restore_tty=$(stty -g 2>/dev/null || true); __rumux_restore() {{ if [ -n \"$__rumux_restore_tty\" ]; then stty \"$__rumux_restore_tty\" 2>/dev/null || stty echo 2>/dev/null || true; else stty echo 2>/dev/null || true; fi; }}; trap '__rumux_restore' EXIT INT TERM; stty -echo 2>/dev/null || true; printf '%s\\n' {start_marker}; {shell} -lc {command}; rumux_status=$?; printf '\\033]777;rumux-command;{token};%s\\007' \"$rumux_status\"; printf '%s%s\\n' {exit_marker_prefix} \"$rumux_status\"; __rumux_restore; trap - EXIT INT TERM\n"
     )
 }
 
-fn wrap_command_for_agent(command: &str, start_marker: &str, exit_marker_prefix: &str) -> String {
+fn wrap_command_for_agent(
+    command: &str,
+    start_marker: &str,
+    exit_marker_prefix: &str,
+    token: &str,
+) -> String {
     #[cfg(windows)]
     {
         let shell = default_shell().to_ascii_lowercase();
         if shell.contains("pwsh") || shell.contains("powershell") {
             format!(
-                "Write-Output '{start_marker}'\n{command}\n$rumuxStatus = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}\nWrite-Output '{exit_marker_prefix}'$rumuxStatus\n"
+                "Write-Output '{start_marker}'\n{command}\n$rumuxStatus = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}\n& $env:RUMUX_EVENT_HELPER --terminal-complete '{token}' $rumuxStatus\nWrite-Output ('{exit_marker_prefix}' + $rumuxStatus)\n"
             )
         } else {
             format!(
-                "echo {start_marker}\r\n{command}\r\nset RUMUX_EXIT=%ERRORLEVEL%\r\necho {exit_marker_prefix}%RUMUX_EXIT%\r\n"
+                "echo {start_marker}\r\n{command}\r\nset RUMUX_EXIT=%ERRORLEVEL%\r\n\"%RUMUX_EVENT_HELPER%\" --terminal-complete {token} %RUMUX_EXIT%\r\necho {exit_marker_prefix}%RUMUX_EXIT%\r\n"
             )
         }
     }
 
     #[cfg(not(windows))]
     {
-        wrap_posix_command(command, &default_shell(), start_marker, exit_marker_prefix)
+        wrap_posix_command(
+            command,
+            &default_shell(),
+            start_marker,
+            exit_marker_prefix,
+            token,
+        )
     }
 }
 
@@ -2218,6 +2269,32 @@ fn shell_single_quote(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::token_matches;
+
+    #[test]
+    fn command_receipt_completes_after_visible_boundaries_are_erased() {
+        assert_eq!(
+            super::command_output_with_receipt(
+                "remaining\n__exit__:7\nprompt",
+                "__start__",
+                "__exit__:",
+                Some(7)
+            ),
+            Some(("remaining\n".into(), Some(7), true))
+        );
+        assert_eq!(
+            super::command_output_with_receipt(
+                "__start__\nremaining",
+                "__start__",
+                "__exit__:",
+                Some(7)
+            ),
+            Some(("remaining".into(), Some(7), true))
+        );
+        assert_eq!(
+            super::command_output_with_receipt("remaining", "__start__", "__exit__:", None),
+            None
+        );
+    }
 
     #[test]
     fn command_completion_handles_output_without_a_trailing_newline() {

@@ -79,7 +79,7 @@ ssh -V
 python3 --version
 """
     subprocess.run(["wsl.exe", "-d", name, "-u", "root", "--exec", "/bin/sh", "-s"],
-                   input=script, text=True, check=True, timeout=300)
+                   input=script.encode("utf-8"), check=True, timeout=300)
     with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as output:
         output.write("RUMUX_TEST_WSL_DISTRO=" + name + "\n")
     print(json.dumps({"owned_wsl": name, "version": 1, "rootfs_sha256": SHA256}))

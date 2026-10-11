@@ -1,3 +1,5 @@
+use crate::render_stack::with_render_stack;
+
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
     Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, PaintIndex,
@@ -44,7 +46,9 @@ impl<V: Render> Element for Entity<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut element = self.update(cx, |view, cx| view.render(window, cx).into_any_element());
+        let mut element = with_render_stack(|| {
+            self.update(cx, |view, cx| view.render(window, cx).into_any_element())
+        });
         let layout_id = window.with_rendered_view(self.entity_id(), |window| {
             element.request_layout(window, cx)
         });
@@ -351,6 +355,7 @@ impl std::fmt::Debug for AnyWeakView {
 }
 
 mod any_view {
+    use super::with_render_stack;
     use crate::{AnyElement, AnyView, App, IntoElement, Render, Window};
 
     pub(crate) fn render<V: 'static + Render>(
@@ -359,7 +364,7 @@ mod any_view {
         cx: &mut App,
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
-        view.update(cx, |view, cx| view.render(window, cx).into_any_element())
+        with_render_stack(|| view.update(cx, |view, cx| view.render(window, cx).into_any_element()))
     }
 }
 

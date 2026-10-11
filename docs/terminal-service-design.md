@@ -3,7 +3,8 @@
 This implements the open session-lifecycle acceptance boundary in ROADMAP.md.
 The service follows herdr's separate PTY ownership model while retaining Rumux's
 GPUI shell. Native macOS and Linux suites prove live detach and cold history
-restore. Windows runtime qualification is pending.
+restore. The installed Windows package also passed service lifecycle and private
+state checks at `9cfb02a`; debug layout and Windows SSH qualification remain open.
 
 The desktop starts a per-profile headless service from the installed app binary.
 It owns PTY masters, child waiters and the authoritative Alacritty parser. Closing
@@ -21,6 +22,13 @@ Stable pane UUIDs select existing processes on reattach. A new pane supplies its
 validated launch directory or typed SSH connection. Tabs and workspace copies
 have distinct UUIDs and processes. The service retains title, remote/local CWD,
 agent status and a bounded notification queue while the desktop is absent.
+Command wrappers emit nonce-tagged OSC completion receipts. The service retains
+the latest 16 independently of screen/history contents. If a command erases its
+visible capture boundaries, RPC still returns its exit status and marks output
+`truncated: true`. Native Windows wrappers invoke the installed app's lightweight
+`--terminal-complete` mode through the service-provided `RUMUX_EVENT_HELPER` path.
+Older services omit this optional metadata; visible-marker fallback remains
+compatible, and upgrading does not silently stop their processes.
 Terminal queries are answered by the service, so a detached shell is not blocked
 waiting for a UI response.
 
@@ -53,7 +61,8 @@ across desktop exit/restart, input to the resumed shell, scrollback and colors,
 alternate-screen/fragmented-output reattach, resize, explicit close/reaping,
 authenticated IPC, slow-client isolation, SSH forwarding across detach, cold
 history restore, future/corrupt history preservation and disabled persistence.
-macOS/Linux checks have executed; native Windows checks remain required.
+macOS/Linux checks have executed. Installed Windows service checks passed;
+the full debug and remote suite remains required.
 
 The authoritative parser remains in the service, including fragmented VTE/OSC
 input, primary and alternate grids and terminal query responses. Notifications

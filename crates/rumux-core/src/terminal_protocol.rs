@@ -11,6 +11,7 @@ pub enum TerminalSignal {
     Title(String),
     WorkingDirectory(String),
     Status(crate::status::SurfaceStatus),
+    CommandCompleted { token: String, exit_code: i32 },
 }
 
 #[derive(Default)]
@@ -136,6 +137,16 @@ impl TerminalProtocolParser {
                 ))
             }
             "777" => {
+                if let Some(rest) = payload.strip_prefix("rumux-command;") {
+                    let (token, exit_code) = rest.split_once(';')?;
+                    if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                        return None;
+                    }
+                    return Some(TerminalSignal::CommandCompleted {
+                        token: token.to_string(),
+                        exit_code: exit_code.parse().ok()?,
+                    });
+                }
                 let rest = payload.strip_prefix("notify;")?;
                 let (title, body) = rest.split_once(';').unwrap_or((rest, ""));
                 notification(clean_text(title), clean_text(body))
@@ -346,5 +357,36 @@ mod tests {
                 .feed(b"\x1b]7;https://remote.example/tmp/project\x07")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn command_receipts_are_bounded_and_survive_fragmented_escape_sequences() {
+        let token = "1234567890abcdef1234567890abcdef";
+        let bytes = format!("\x1b]777;rumux-command;{token};7\x07");
+        for boundary in 0..bytes.len() {
+            let mut parser = TerminalProtocolParser::default();
+            let mut signals = parser.feed(&bytes.as_bytes()[..boundary]);
+            signals.extend(parser.feed(&bytes.as_bytes()[boundary..]));
+            assert_eq!(
+                signals,
+                vec![TerminalSignal::CommandCompleted {
+                    token: token.into(),
+                    exit_code: 7
+                }]
+            );
+        }
+        let mut parser = TerminalProtocolParser::default();
+        for receipt in [
+            "short;0",
+            "1234567890abcdef1234567890abcdef;not-a-status",
+            "1234567890abcdef1234567890abcdef;2147483648",
+            "1234567890abcdef1234567890abcdef;0;extra",
+        ] {
+            assert!(
+                parser
+                    .feed(format!("\x1b]777;rumux-command;{receipt}\x07").as_bytes())
+                    .is_empty()
+            );
+        }
     }
 }

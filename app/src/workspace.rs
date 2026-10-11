@@ -994,6 +994,16 @@ impl Workspace {
         })
     }
 
+    pub fn surface_command_completions(
+        &self,
+        index: Option<usize>,
+        cx: &App,
+    ) -> Vec<(String, i32)> {
+        self.resolve_surface_target(index, cx)
+            .map(|target| target.panel.read(cx).command_completions().to_vec())
+            .unwrap_or_default()
+    }
+
     fn target_tab_panel(&self, window: Option<&Window>, cx: &App) -> Option<Entity<TabPanel>> {
         self.dock_area.read(cx).target_tab_panel(window, cx)
     }

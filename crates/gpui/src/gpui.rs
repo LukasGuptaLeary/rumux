@@ -30,6 +30,7 @@ mod keymap;
 mod path_builder;
 mod platform;
 pub mod prelude;
+mod render_stack;
 mod scene;
 mod shared_string;
 mod shared_uri;

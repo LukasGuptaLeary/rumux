@@ -35,6 +35,7 @@ pub struct TerminalPanel {
     pub unread: bool,
     protocol: TerminalProtocolParser,
     notification_sequence: u64,
+    completed_commands: Vec<(String, i32)>,
     _output_subscription: Subscription,
 }
 
@@ -85,6 +86,13 @@ impl TerminalPanel {
                                         connection.directory = Some(path.clone());
                                     }
                                 }
+                                TerminalSignal::CommandCompleted { token, exit_code } => {
+                                    panel.completed_commands.retain(|(old, _)| old != token);
+                                    panel.completed_commands.push((token.clone(), *exit_code));
+                                    if panel.completed_commands.len() > 16 {
+                                        panel.completed_commands.remove(0);
+                                    }
+                                }
                                 _ => {}
                             }
                             cx.emit(TerminalPanelEvent::Signal(signal));
@@ -96,6 +104,7 @@ impl TerminalPanel {
                         >(metadata.clone())
                         {
                             panel.status = metadata.status;
+                            panel.completed_commands = metadata.completed_commands;
                             panel.status_message = metadata.status_message;
                             panel.terminal_title =
                                 (!metadata.title.is_empty()).then_some(metadata.title);
@@ -178,6 +187,7 @@ impl TerminalPanel {
             unread: false,
             protocol: TerminalProtocolParser::default(),
             notification_sequence: 0,
+            completed_commands: Vec::new(),
             _output_subscription: subscription,
         }
     }
@@ -276,6 +286,10 @@ impl TerminalPanel {
 
     pub fn index(&self) -> usize {
         self.index
+    }
+
+    pub fn command_completions(&self) -> &[(String, i32)] {
+        &self.completed_commands
     }
 
     pub fn cwd(&self) -> Option<&str> {

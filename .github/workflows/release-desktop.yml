@@ -89,9 +89,36 @@ jobs:
         if: runner.os == 'macOS'
         run: python3 scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.zip --ssh
 
+      - name: Cache Windows SSH target rootfs
+        if: runner.os == 'Windows'
+        id: wsl_rootfs
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/rumux-wsl-rootfs
+          key: wsl-ssh-rootfs-1483cc5c1dce13064f774834cbffdff226559fd522a67a381a8ea77d63fb4109
+
+      - name: Prepare owned Windows SSH target
+        id: windows_ssh_host
+        if: runner.os == 'Windows'
+        run: python scripts/windows-ssh-host.py setup
+
+      - name: Verify native Windows SSH fixture
+        if: runner.os == 'Windows'
+        run: python scripts/windows_ssh_fixture.py
+
       - name: Qualify installed package (Windows)
         if: runner.os == 'Windows'
-        run: python scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.zip
+        run: python scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.zip --ssh
+
+      - name: Cache verified Windows SSH target rootfs
+        if: always() && runner.os == 'Windows' && steps.wsl_rootfs.outputs.cache-hit != 'true' && steps.windows_ssh_host.outputs.rootfs_verified == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/rumux-wsl-rootfs
+          key: wsl-ssh-rootfs-1483cc5c1dce13064f774834cbffdff226559fd522a67a381a8ea77d63fb4109
+      - name: Remove owned Windows SSH target
+        if: always() && runner.os == 'Windows'
+        run: python scripts/windows-ssh-host.py cleanup
 
       - uses: actions/upload-artifact@v4
         with:

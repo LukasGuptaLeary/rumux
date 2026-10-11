@@ -26,6 +26,38 @@ use std::time::{Duration, Instant};
 pub struct ServiceClient(pub Client);
 impl gpui::Global for ServiceClient {}
 
+/// Native Windows shells use this lightweight process mode to enable VT on
+/// their inherited console and emit the same receipt that POSIX printf emits.
+pub fn emit_completion(token: &str, exit_code: i32) -> Result<()> {
+    ensure!(
+        token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "Invalid command token"
+    );
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::{
+            ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE,
+            SetConsoleMode,
+        };
+        // SAFETY: These functions operate on the inherited stdout console.
+        let handle = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+        let mut mode = 0;
+        ensure!(
+            unsafe { GetConsoleMode(handle, &mut mode) } != 0,
+            "Completion requires a console: {}",
+            std::io::Error::last_os_error()
+        );
+        ensure!(
+            unsafe { SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) } != 0,
+            "Unable to enable terminal escapes: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    std::io::stdout()
+        .write_all(format!("\x1b]777;rumux-command;{token};{exit_code}\x07").as_bytes())?;
+    Ok(())
+}
+
 fn directory() -> PathBuf {
     rumux_core::runtime::rumux_config_dir().join("terminals")
 }
@@ -246,6 +278,8 @@ pub struct Metadata {
     pub notifications: Vec<Notice>,
     pub notification_sequence: u64,
     pub pid: Option<u32>,
+    #[serde(default)]
+    pub completed_commands: Vec<(String, i32)>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Notice {
@@ -383,6 +417,7 @@ impl Terminal {
             command.env(name, value);
         }
         command.env("RUMUX_SURFACE_ID", id.to_string());
+        command.env("RUMUX_EVENT_HELPER", std::env::current_exe()?);
         if let Some(cwd) = &launch.cwd {
             command.cwd(cwd);
         }
@@ -475,6 +510,16 @@ impl Terminal {
                         TerminalSignal::Status(status) => {
                             state.metadata.status = status;
                             state.metadata.status_message = None;
+                        }
+                        TerminalSignal::CommandCompleted { token, exit_code } => {
+                            state
+                                .metadata
+                                .completed_commands
+                                .retain(|(old, _)| old != &token);
+                            state.metadata.completed_commands.push((token, exit_code));
+                            if state.metadata.completed_commands.len() > 16 {
+                                state.metadata.completed_commands.remove(0);
+                            }
                         }
                         TerminalSignal::Notification { title, body } => {
                             state.metadata.notification_sequence =

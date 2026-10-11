@@ -371,3 +371,46 @@ distribution. The native desktop, service and client run outside WSL. POSIX
 remote Python commands now use the fixture's interpreter rather than the
 Windows client's executable. The common harness passed macOS/Linux suites;
 Windows execution and workflow integration of this fixture remain pending.
+
+## Rendering stack boundary and independent completion receipts
+
+At `9cfb02a`, both native debug and installed suites passed on macOS/Linux;
+Windows installed checks passed again. The Windows debugger finally attached
+and captured the main-thread failure in `TerminalPanel::title_suffix` while
+allocating a button during dock layout. It did not establish COM reentry as the
+cause. Local debug prologues reserve approximately 118 KiB for that suffix and
+129 KiB for the surrounding dock title bar, exceeding the recursive div's
+128 KiB stack margin before another div check can run. GPUI now checks at view
+and one-shot component rendering boundaries, growing existing same-thread
+stack segments when less than 512 KiB remains. Main-thread limits and native
+debug coverage are unchanged. The exact helper has a regression that nests
+256 KiB frames on a 192 KiB thread; it passed locally on macOS/Linux.
+
+A real macOS PTY command that emitted CSI 2J/3J and exited 7 erased its START
+capture marker. RPC incorrectly timed out despite the visible exit status.
+Command wrappers now emit bounded nonce-tagged OSC receipts, retained separately
+by the authoritative service. Erasure no longer hides completion; incomplete
+output capture is explicitly marked truncated. Parser tests cover every escape
+fragment boundary and invalid receipts. Native Windows wrappers use a small
+console mode of the installed app, with its path supplied by the service. The
+exact Windows helper type-checks for MSVC locally; execution remains required.
+
+The final local batch passed 139 workspace tests and 28 doctests on macOS ARM64
+and Linux ARM64. Installed macOS suites passed 36/37 checks in 10.41/10.04 s;
+the archive SHA-256 is
+`7b63b0454aeef0e56bf2296e5c8490fe90cad57445aeee849738278a71dfb82f`.
+Linux uses the same retained validation image/target cache and frozen source
+archive SHA-256
+`92db2841e4e226b8941af0526159e7b1c04fe0c40bc436319ba26997b530fef5`.
+Installed Linux suites passed 36/37 checks in 8.24/8.10 s; its archive SHA-256
+is `81065afe122237cf3e7fa0f950e97407fb4478d4dbae99ae6daea5e9b673144a`.
+These packages record base `9cfb02a` plus the explicitly dirty completion tree.
+The suite verifies remote screen/history erasure, native local receipts and
+retention of only the latest 16 receipts. Windows cls clears the viewport;
+its receipt is independently checked rather than assuming it erases history.
+
+Windows CI now prepares the owned WSL1 target, proves a strict-host-key native
+OpenSSH connection, and runs the complete debug and installed SSH suites.
+Scripts pipe UTF-8 bytes to preserve POSIX LF. Verified rootfs bytes are cached
+even if a later native check fails, and an always-run cleanup unregisters only
+the owned distribution. This workflow is configured, not yet qualified evidence.

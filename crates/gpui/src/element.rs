@@ -221,12 +221,13 @@ impl<C: RenderOnce> Element for Component<C> {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         window.with_global_id(ElementId::Name(type_name::<C>().into()), |_, window| {
-            let mut element = self
-                .component
-                .take()
-                .unwrap()
-                .render(window, cx)
-                .into_any_element();
+            let mut element = crate::render_stack::with_render_stack(|| {
+                self.component
+                    .take()
+                    .unwrap()
+                    .render(window, cx)
+                    .into_any_element()
+            });
 
             let layout_id = element.request_layout(window, cx);
             (layout_id, element)
