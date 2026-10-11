@@ -85,6 +85,10 @@ pub fn instance_lock_path() -> PathBuf {
     rumux_runtime_dir().join(format!("{}.lock", endpoint_tag(&ipc_endpoint())))
 }
 
+pub fn ipc_token_path(addr: SocketAddr) -> PathBuf {
+    rumux_config_dir().join(format!("rpc-{}.token", addr.port()))
+}
+
 pub fn default_shell() -> String {
     #[cfg(windows)]
     {

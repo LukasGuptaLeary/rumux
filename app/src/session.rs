@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-const SESSION_SCHEMA_VERSION: u32 = 2;
+const SESSION_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -20,6 +20,7 @@ pub struct SessionData {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceSession {
+    pub id: Option<String>,
     pub name: String,
     pub cwd: String,
     pub dock_area: Option<DockAreaState>,
@@ -149,12 +150,14 @@ mod tests {
             window_height: 800.0,
             workspaces: vec![
                 WorkspaceSession {
+                    id: None,
                     name: "Main".to_string(),
                     cwd: "/home/user".to_string(),
                     dock_area: None,
                     next_terminal_index: Some(1),
                 },
                 WorkspaceSession {
+                    id: None,
                     name: "Dev".to_string(),
                     cwd: "/home/user/project".to_string(),
                     dock_area: None,

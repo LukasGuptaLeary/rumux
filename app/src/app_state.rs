@@ -137,6 +137,10 @@ impl AppState {
             workspace.to_session(cx)
         };
         snapshot.name = format!("{} (copy)", snapshot.name);
+        snapshot.id = None;
+        if let Some(dock) = &mut snapshot.dock_area {
+            clear_panel_ids(&mut dock.center);
+        }
 
         let ws = self.restore_workspace(snapshot, window, cx);
         self.workspaces.push(ws);
@@ -412,5 +416,18 @@ impl AppState {
 
     fn workspace_color(index: usize) -> u32 {
         theme::WORKSPACE_COLORS[index % theme::WORKSPACE_COLORS.len()]
+    }
+}
+
+fn clear_panel_ids(panel: &mut gpui_component::dock::PanelState) {
+    if panel.panel_name == "TerminalPanel" {
+        if let gpui_component::dock::PanelInfo::Panel(value) = &mut panel.info {
+            if let Some(info) = value.as_object_mut() {
+                info.remove("id");
+            }
+        }
+    }
+    for child in &mut panel.children {
+        clear_panel_ids(child);
     }
 }

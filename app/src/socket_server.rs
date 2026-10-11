@@ -5,7 +5,7 @@ use futures_lite::io::{
 };
 use gpui::{AppContext, AsyncApp, Context as ViewContext, Keystroke, WeakEntity, Window};
 use gpui_component::Placement;
-use rumux_core::runtime::{IpcEndpoint, default_shell, ipc_endpoint};
+use rumux_core::runtime::{IpcEndpoint, default_shell, ipc_endpoint, ipc_token_path};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
@@ -17,6 +17,8 @@ use smol::net::unix::UnixListener;
 
 #[derive(Debug, Deserialize)]
 pub struct RpcRequest {
+    #[serde(default)]
+    auth_token: Option<String>,
     pub id: String,
     pub method: String,
     #[serde(default)]
@@ -53,9 +55,11 @@ struct WorkspaceRenameParams {
     new_name: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 struct SurfaceTargetParams {
+    workspace_id: Option<String>,
+    surface_id: Option<String>,
     workspace_index: Option<usize>,
     workspace_name: Option<String>,
     surface_index: Option<usize>,
@@ -67,6 +71,14 @@ struct SurfaceRenameParams {
     target: SurfaceTargetParams,
     #[serde(default)]
     name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SurfaceStatusParams {
+    #[serde(flatten)]
+    target: SurfaceTargetParams,
+    status: rumux_core::status::SurfaceStatus,
+    message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,7 +217,7 @@ async fn start_unix_socket_server(
             Ok((stream, _)) => {
                 let state = app_state.clone();
                 cx.spawn(async move |cx| {
-                    handle_stream(stream, state, cx).await;
+                    handle_stream(stream, state, None, cx).await;
                 })
                 .detach();
             }
@@ -228,13 +240,15 @@ async fn start_tcp_socket_server(
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind TCP socket at {addr}"))?;
+    let token = create_auth_token(addr)?;
 
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
                 let state = app_state.clone();
+                let token = token.clone();
                 cx.spawn(async move |cx| {
-                    handle_stream(stream, state, cx).await;
+                    handle_stream(stream, state, Some(&token), cx).await;
                 })
                 .detach();
             }
@@ -245,8 +259,49 @@ async fn start_tcp_socket_server(
     }
 }
 
-async fn handle_stream<S>(stream: S, app_state: WeakEntity<AppState>, cx: &mut AsyncApp)
-where
+fn create_auth_token(addr: std::net::SocketAddr) -> anyhow::Result<String> {
+    create_auth_token_at(&ipc_token_path(addr))
+}
+
+fn create_auth_token_at(path: &std::path::Path) -> anyhow::Result<String> {
+    use std::io::Write;
+    let parent = path.parent().context("RPC token path has no parent")?;
+    std::fs::create_dir_all(parent)?;
+    let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(token.as_bytes())?;
+    file.as_file().sync_all()?;
+    file.persist(path)
+        .context("Failed to save TCP authentication token")?;
+    Ok(token)
+}
+
+fn token_matches(expected: &str, provided: Option<&str>) -> bool {
+    let Some(provided) = provided else {
+        return false;
+    };
+    if provided.len() != expected.len() {
+        return false;
+    }
+    expected
+        .bytes()
+        .zip(provided.bytes())
+        .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+        == 0
+}
+
+async fn handle_stream<S>(
+    stream: S,
+    app_state: WeakEntity<AppState>,
+    auth_token: Option<&str>,
+    cx: &mut AsyncApp,
+) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let (reader, mut writer) = smol::io::split(stream);
@@ -263,12 +318,21 @@ where
     .await;
     if read.is_ok() && line.ends_with('\n') {
         let response = match serde_json::from_str::<RpcRequest>(&line) {
-            Ok(req) => match req.method.as_str() {
-                "surface.wait_for_output" => {
-                    handle_surface_wait_for_output(req, &app_state, cx).await
-                }
-                "surface.run_command" => handle_surface_run_command(req, &app_state, cx).await,
-                _ => handle_request(req, &app_state, cx),
+            Ok(mut req) => match if auth_token
+                .is_some_and(|token| !token_matches(token, req.auth_token.as_deref()))
+            {
+                Err("TCP RPC authentication failed".into())
+            } else {
+                normalize_targets(&mut req, &app_state, cx)
+            } {
+                Err(error) => RpcResponse::error(req.id, error),
+                Ok(()) => match req.method.as_str() {
+                    "surface.wait_for_output" => {
+                        handle_surface_wait_for_output(req, &app_state, cx).await
+                    }
+                    "surface.run_command" => handle_surface_run_command(req, &app_state, cx).await,
+                    _ => handle_request(req, &app_state, cx),
+                },
             },
             Err(error) => RpcResponse::error(String::new(), format!("Invalid JSON: {error}")),
         };
@@ -281,16 +345,183 @@ where
     }
 }
 
+// Resolve public IDs at the boundary and pin the implicit target of asynchronous
+// calls. Indices stay in responses for existing clients; UUIDs own identity.
+fn normalize_targets(
+    request: &mut RpcRequest,
+    app_state: &WeakEntity<AppState>,
+    cx: &mut AsyncApp,
+) -> Result<(), String> {
+    let surface_method = request.method.starts_with("surface.");
+    let workspace_method = request.method.starts_with("workspace.");
+    let notification_method = request.method == "notification.create";
+    if !(surface_method || workspace_method || notification_method) {
+        return Ok(());
+    }
+    if !request.params.is_object() {
+        return Err("Params must be an object".into());
+    }
+    with_state(app_state, cx, |state, cx| {
+        if workspace_method {
+            if let Some(id) = request.params.get("workspace_id") {
+                let id = id.as_str().ok_or("workspace_id must be a UUID string")?;
+                if request.params.get("index").is_some_and(|v| !v.is_null())
+                    || request.params.get("name").is_some_and(|v| !v.is_null())
+                {
+                    return Err("Use one workspace selector: workspace_id, index or name".into());
+                }
+                let index = workspace_index_by_id(state, id, cx)?;
+                request.params["index"] = serde_json::json!(index);
+            }
+            return Ok(());
+        }
+        let mut target: SurfaceTargetParams = parse_params(request.params.clone())?;
+        if [
+            target.workspace_id.is_some(),
+            target.workspace_index.is_some(),
+            target.workspace_name.is_some(),
+        ]
+        .into_iter()
+        .filter(|provided| *provided)
+        .count()
+            > 1
+        {
+            return Err(
+                "Use one workspace selector: workspace_id, workspace_index or workspace_name"
+                    .into(),
+            );
+        }
+        if target.surface_id.is_some() && target.surface_index.is_some() {
+            return Err("Use one surface selector: surface_id or surface_index".into());
+        }
+        let (workspace_index, surface_index) = resolve_surface_params(state, &target, cx)?;
+        let workspace = state.workspaces[workspace_index].read(cx);
+        target.workspace_id = Some(workspace.id.to_string());
+        request.params["workspace_index"] = serde_json::json!(workspace_index);
+        request.params["workspace_id"] = serde_json::json!(target.workspace_id);
+        if surface_method || target.surface_id.is_some() || target.surface_index.is_some() {
+            let surface = workspace
+                .list_surfaces(cx)
+                .into_iter()
+                .find(|surface| {
+                    surface_index.map_or(surface.target, |index| surface.index == index)
+                })
+                .ok_or_else(|| surface_not_found_message(surface_index))?;
+            request.params["surface_index"] = serde_json::json!(surface.index);
+            request.params["surface_id"] = serde_json::json!(surface.id);
+        }
+        Ok(())
+    })
+}
+
+fn workspace_index_by_id(state: &AppState, id: &str, cx: &gpui::App) -> Result<usize, String> {
+    let id = Uuid::parse_str(id).map_err(|_| "workspace_id must be a UUID string")?;
+    state
+        .workspaces
+        .iter()
+        .position(|workspace| workspace.read(cx).id == id)
+        .ok_or_else(|| format!("Workspace {id} was not found"))
+}
+
+fn resolve_surface_params(
+    state: &AppState,
+    target: &SurfaceTargetParams,
+    cx: &gpui::App,
+) -> Result<(usize, Option<usize>), String> {
+    let workspace_index = if let Some(id) = &target.workspace_id {
+        workspace_index_by_id(state, id, cx)?
+    } else if target.workspace_index.is_none()
+        && target.workspace_name.is_none()
+        && target.surface_id.is_some()
+    {
+        let id = Uuid::parse_str(target.surface_id.as_deref().unwrap_or_default())
+            .map_err(|_| "surface_id must be a UUID string")?
+            .to_string();
+        state
+            .workspaces
+            .iter()
+            .position(|workspace| {
+                workspace
+                    .read(cx)
+                    .list_surfaces(cx)
+                    .iter()
+                    .any(|surface| surface.id == id)
+            })
+            .ok_or_else(|| format!("Surface {id} was not found"))?
+    } else {
+        resolve_workspace_index(
+            state,
+            target.workspace_index,
+            target.workspace_name.as_deref(),
+            cx,
+        )?
+    };
+    let surface_index = if let Some(id) = &target.surface_id {
+        let id = Uuid::parse_str(id)
+            .map_err(|_| "surface_id must be a UUID string")?
+            .to_string();
+        Some(
+            state.workspaces[workspace_index]
+                .read(cx)
+                .list_surfaces(cx)
+                .iter()
+                .find(|surface| surface.id == id)
+                .ok_or_else(|| format!("Surface {id} was not found"))?
+                .index,
+        )
+    } else {
+        target.surface_index
+    };
+    Ok((workspace_index, surface_index))
+}
+
 fn handle_request(
     req: RpcRequest,
     app_state: &WeakEntity<AppState>,
     cx: &mut AsyncApp,
 ) -> RpcResponse {
-    let RpcRequest { id, method, params } = req;
+    let RpcRequest {
+        id, method, params, ..
+    } = req;
 
     let result = match method.as_str() {
+        "surface.set_status" => {
+            let params = match parse_params::<SurfaceStatusParams>(params) {
+                Ok(params) => params,
+                Err(error) => return RpcResponse::error(id, error),
+            };
+            if params.status == rumux_core::status::SurfaceStatus::Exited {
+                return RpcResponse::error(
+                    id,
+                    "Exited status is set by the terminal process".into(),
+                );
+            }
+            if params
+                .message
+                .as_ref()
+                .is_some_and(|message| message.len() > 4096)
+            {
+                return RpcResponse::error(id, "Status message exceeds 4096 bytes".into());
+            }
+            with_state(app_state, cx, |state, cx| {
+                let (workspace_index, surface_index) =
+                    resolve_surface_params(state, &params.target, cx)?;
+                let workspace = state.workspaces[workspace_index].clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.set_surface_status(surface_index, params.status, params.message, cx);
+                });
+                surface_operation_response(
+                    "surface",
+                    workspace_index,
+                    &workspace.read(cx),
+                    surface_index,
+                    cx,
+                )
+            })
+        }
         "system.ping" => Ok(serde_json::json!({ "pong": true })),
         "system.capabilities" => Ok(serde_json::json!({
+            "stable_ids": true,
             "methods": supported_methods(),
             "access_mode": "rumuxOnly",
             "transport": format!("{:?}", ipc_endpoint()),
@@ -1229,6 +1460,7 @@ fn handle_request(
                 Err(error) => return RpcResponse::error(id, error),
             };
             with_window_state(app_state, cx, move |window, state, cx| {
+                cx.activate(true);
                 if state.open_notification(&params.id, window, cx) {
                     Ok(serde_json::json!({ "focused": true }))
                 } else {
@@ -1272,6 +1504,7 @@ fn supported_methods() -> &'static [&'static str] {
         "surface.split",
         "surface.close",
         "surface.rename",
+        "surface.set_status",
         "surface.next",
         "surface.prev",
         "surface.zoom",
@@ -1423,6 +1656,9 @@ fn surface_placeholder(
     workspace: &crate::workspace::Workspace,
 ) -> crate::workspace::SurfaceSummary {
     crate::workspace::SurfaceSummary {
+        id: String::new(),
+        status: rumux_core::status::SurfaceStatus::Idle,
+        status_message: None,
         exited: false,
         index,
         title: format!("Terminal {}", index + 1),
@@ -1555,20 +1791,15 @@ fn read_surface_text_snapshot(
     scope: SurfaceReadScope,
 ) -> Result<SurfaceTextSnapshot, String> {
     with_state(app_state, cx, |state, cx| {
-        let workspace_index = resolve_workspace_index(
-            state,
-            target.workspace_index,
-            target.workspace_name.as_deref(),
-            &**cx,
-        )?;
+        let (workspace_index, surface_index) = resolve_surface_params(state, target, cx)?;
         let workspace = state.workspaces[workspace_index].read(cx);
         let text = workspace
-            .read_surface_text(target.surface_index, scope, &**cx)
-            .ok_or_else(|| surface_not_found_message(target.surface_index))?;
+            .read_surface_text(surface_index, scope, &**cx)
+            .ok_or_else(|| surface_not_found_message(surface_index))?;
         Ok(SurfaceTextSnapshot {
             workspace_index,
             workspace_name: workspace.name.clone(),
-            surface_index: resolved_surface_index(&workspace, target.surface_index, &**cx),
+            surface_index: resolved_surface_index(&workspace, surface_index, &**cx),
             text,
         })
     })
@@ -1821,4 +2052,46 @@ fn wrap_command_for_agent(command: &str, start_marker: &str, exit_marker_prefix:
 #[cfg(not(windows))]
 fn shell_single_quote(raw: &str) -> String {
     format!("'{}'", raw.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::token_matches;
+
+    #[test]
+    fn tcp_authentication_requires_the_complete_token() {
+        assert!(!token_matches("private-rpc-token", None));
+        assert!(!token_matches("private-rpc-token", Some("")));
+        assert!(!token_matches(
+            "private-rpc-token",
+            Some("private-rpc-tokeN")
+        ));
+        assert!(!token_matches(
+            "private-rpc-token",
+            Some("private-rpc-token-extra")
+        ));
+        assert!(token_matches(
+            "private-rpc-token",
+            Some("private-rpc-token")
+        ));
+    }
+
+    #[test]
+    fn tcp_token_is_rotated_and_private_on_unix() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("token");
+        let first = super::create_auth_token_at(&path).unwrap();
+        let second = super::create_auth_token_at(&path).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(second.len(), 64);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), second);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
 }

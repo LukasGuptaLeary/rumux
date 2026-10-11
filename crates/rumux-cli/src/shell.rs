@@ -1,70 +1,62 @@
 use anyhow::{Context, Result};
+use clap::Args;
 use std::process::Command;
 
-/// Check if the claude CLI is available in PATH.
+#[derive(Debug, Default, Args)]
+pub struct AgentOptions {
+    /// Agent executable (defaults to RUMUX_AGENT, then claude)
+    #[arg(long)]
+    pub agent: Option<String>,
+    /// Argument passed directly to the agent; repeat for multiple arguments
+    #[arg(long = "agent-arg", allow_hyphen_values = true)]
+    pub agent_args: Vec<String>,
+    /// Prepare or locate the worktree without launching an agent
+    #[arg(long, conflicts_with_all = ["agent", "agent_args"])]
+    pub no_agent: bool,
+}
+
 pub fn check_claude_cli() -> Result<()> {
-    match which("claude") {
-        true => Ok(()),
-        false => Err(rumux_core::errors::RumuxError::ClaudeNotFound.into()),
-    }
+    which::which("claude")
+        .map(|_| ())
+        .map_err(|_| rumux_core::errors::RumuxError::ClaudeNotFound.into())
 }
 
-fn which(program: &str) -> bool {
-    Command::new("which")
-        .arg(program)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+pub fn launch_agent(
+    dir: &std::path::Path,
+    prompt: Option<&str>,
+    resume: bool,
+    options: &AgentOptions,
+) -> Result<()> {
+    let program = options
+        .agent
+        .clone()
+        .or_else(|| {
+            std::env::var("RUMUX_AGENT")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "claude".into());
+    let executable = which::which(&program).with_context(|| {
+        format!("Agent executable '{program}' was not found; use --agent or --no-agent")
+    })?;
+    let is_claude = executable
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("claude"));
+    let mut cmd = Command::new(executable);
+    cmd.current_dir(dir).args(&options.agent_args);
+    if is_claude && resume && options.agent_args.is_empty() {
+        cmd.arg("--continue");
+    }
+    if let Some(prompt) = prompt {
+        if is_claude {
+            cmd.arg("-p");
+        }
+        cmd.arg(prompt);
+    }
+    let status = cmd
         .status()
-        .is_ok_and(|s| s.success())
-}
-
-/// Launch claude in the given directory.
-pub fn launch_claude(dir: &std::path::Path, prompt: Option<&str>) -> Result<()> {
-    check_claude_cli()?;
-
-    let mut cmd = Command::new("claude");
-    cmd.current_dir(dir);
-
-    if let Some(p) = prompt {
-        cmd.arg("-p").arg(p);
-    }
-
-    let status = cmd.status().context("Failed to launch Claude Code")?;
-
-    if !status.success() {
-        eprintln!(
-            "{}",
-            console::style(format!(
-                "Claude exited with status {}",
-                status.code().unwrap_or(-1)
-            ))
-            .dim()
-        );
-    }
-
-    Ok(())
-}
-
-/// Launch claude with --continue flag to resume last session.
-pub fn launch_claude_continue(dir: &std::path::Path) -> Result<()> {
-    check_claude_cli()?;
-
-    let status = Command::new("claude")
-        .arg("--continue")
-        .current_dir(dir)
-        .status()
-        .context("Failed to launch Claude Code")?;
-
-    if !status.success() {
-        eprintln!(
-            "{}",
-            console::style(format!(
-                "Claude exited with status {}",
-                status.code().unwrap_or(-1)
-            ))
-            .dim()
-        );
-    }
-
+        .with_context(|| format!("Failed to launch agent '{program}'"))?;
+    anyhow::ensure!(status.success(), "Agent '{program}' exited with {status}");
     Ok(())
 }

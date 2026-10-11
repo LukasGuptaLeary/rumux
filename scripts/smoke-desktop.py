@@ -35,6 +35,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", default="target/debug/rumux-app")
     parser.add_argument("--cli", default="target/debug/rumux")
+    parser.add_argument("--tcp", action="store_true", help="Exercise authenticated loopback TCP on Unix too")
     args = parser.parse_args()
     app, cli = Path(args.app).resolve(), Path(args.cli).resolve()
     assert app.is_file() and cli.is_file(), "Build rumux-app and rumux-cli first"
@@ -49,9 +50,12 @@ def main():
         env = dict(os.environ, RUMUX_CONFIG_DIR=str(config), RUMUX_RUNTIME_DIR=str(runtime))
         env.pop("RUMUX_SOCKET_ADDR", None)
         env.pop("RUMUX_SOCKET_PATH", None)
+        env.pop("RUMUX_SURFACE_ID", None)
         windows = os.name == "nt"
+        tcp = windows or args.tcp
         env["SHELL"] = "cmd.exe" if windows else "/bin/sh"
-        if windows:
+        env["RUMUX_SHELL"] = env["SHELL"]
+        if tcp:
             with socket.socket() as probe:
                 probe.bind(("127.0.0.1", 0))
                 address = probe.getsockname()
@@ -61,11 +65,13 @@ def main():
             env["RUMUX_SOCKET_PATH"] = endpoint
 
         def rpc(method, params=None):
-            stream = socket.socket(socket.AF_INET if windows else socket.AF_UNIX)
+            stream = socket.socket(socket.AF_INET if tcp else socket.AF_UNIX)
             stream.settimeout(15)
             with stream:
-                stream.connect(address if windows else endpoint)
+                stream.connect(address if tcp else endpoint)
                 request = {"id": "smoke", "method": method, "params": params or {}}
+                if tcp:
+                    request["auth_token"] = (config / f"rpc-{address[1]}.token").read_text(encoding="utf-8").strip()
                 stream.sendall((json.dumps(request) + "\n").encode())
                 with stream.makefile("rb") as reader:
                     response = json.loads(reader.readline(4 * 1024 * 1024))
@@ -101,19 +107,35 @@ def main():
         try:
             launch()
             checks.append("startup and RPC")
+            if tcp:
+                with socket.create_connection(address, timeout=5) as unauthorized:
+                    unauthorized.sendall(b'{"id":"unauthorized","method":"system.ping","params":{}}\n')
+                    with unauthorized.makefile("rb") as reader:
+                        response = json.loads(reader.readline())
+                    assert not response["ok"] and "authentication" in response["error"]
+                checks.append("unauthenticated TCP client rejected")
             second = subprocess.run([str(app)], env=env, cwd=root, capture_output=True, timeout=10)
             assert second.returncode == 0, second.stderr.decode(errors="replace")
             checks.append("single-instance handoff")
             methods = rpc("system.capabilities")["methods"]
             assert "notification.focus" in methods and "surface.run_command" in methods
 
-            work = rpc("workspace.create", {"name": "smoke-work"})["index"]
-            source = rpc("surface.split", {"placement": "right"})["created"]["index"]
+            workspace = rpc("workspace.create", {"name": "smoke-work"})
+            work, workspace_id = workspace["index"], workspace["id"]
+            surface = rpc("surface.split", {"placement": "right"})["created"]
+            source, surface_id = surface["index"], surface["id"]
             target = {"workspace_index": work, "surface_index": source}
             command = python_command("print('smoke-command-result')")
             result = rpc("surface.run_command", dict(target, command=command, timeout_ms=5000))
             assert result["completed"] and result["exit_code"] == 0 and "smoke-command-result" in result["output"], result
             checks.append("real PTY command and output")
+            rpc("surface.set_status", {"surface_id": surface_id, "status": "blocked", "message": "review requested"})
+            reported = next(s for s in rpc("surface.list")["surfaces"] if s["id"] == surface_id)
+            assert reported["status"] == "blocked" and reported["status_message"] == "review requested"
+            marker = python_command("import sys;sys.stdout.write('\\x1b]133;A\\x07');sys.stdout.flush()")
+            rpc("surface.send_text", dict(target, text=marker, append_newline=True))
+            eventually(lambda: next(s for s in rpc("surface.list")["surfaces"] if s["id"] == surface_id)["status"] == "idle")
+            checks.append("agent status and shell prompt activity")
 
             rpc("workspace.select", {"index": 0})
             notify = python_command("import sys,time;sys.stdout.write('\\x1b]777;notify;Chunked;review');sys.stdout.flush();time.sleep(.05);sys.stdout.write('\\x1b\\\\');sys.stdout.flush()")
@@ -123,7 +145,7 @@ def main():
             assert rpc("workspace.current")["index"] == 0
             rpc("notification.focus", {"id": notification["id"]})
             assert rpc("workspace.current")["index"] == work
-            assert next(s for s in rpc("surface.list")["surfaces"] if s["target"])["index"] == source
+            eventually(lambda: next(s for s in rpc("surface.list")["surfaces"] if s["target"])["index"] == source)
             assert next(n for n in rpc("notification.list") if n["id"] == notification["id"])["read"]
             assert rpc("workspace.current")["unread_count"] == 0
             checks.append("fragmented hidden-pane notification and exact focus")
@@ -149,8 +171,8 @@ def main():
             checks.append("concurrent output wait and input")
 
             # An idle client cannot prevent unrelated requests or remain forever.
-            idle = socket.socket(socket.AF_INET if windows else socket.AF_UNIX)
-            idle.connect(address if windows else endpoint)
+            idle = socket.socket(socket.AF_INET if tcp else socket.AF_UNIX)
+            idle.connect(address if tcp else endpoint)
             assert rpc("system.ping")["pong"]
             idle.close()
             failed = subprocess.run([str(cli), "rpc", "does.not.exist"], env=env, capture_output=True, timeout=10)
@@ -168,11 +190,21 @@ def main():
 
             # Removing an earlier workspace must preserve notification ownership.
             note = rpc("notification.create", dict(target, title="ownership", body="test"))
-            rpc("workspace.close", {"index": 0})
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(rpc, "surface.wait_for_output", {"surface_id": surface_id, "pattern": "stable-id-marker", "timeout_ms": 4000})
+                time.sleep(0.1)
+                rpc("workspace.close", {"index": 0})
+                rpc("surface.send_text", {"surface_id": surface_id, "text": "echo stable-id-marker", "append_newline": True})
+                assert pending.result(timeout=6)["matched"]
+            assert rpc("workspace.current")["id"] == workspace_id
+            assert rpc("surface.list", {"workspace_id": workspace_id})["surfaces"]
+            checks.append("stable IDs across workspace reindexing and asynchronous calls")
             note = next(n for n in rpc("notification.list") if n["id"] == note["id"])
             assert note["workspace_id"] == 0
             rpc("notification.focus", {"id": note["id"]})
             assert rpc("workspace.current")["name"] == "smoke-work"
+            assert rpc("workspace.current")["id"] == workspace_id
+            assert any(s["id"] == surface_id for s in rpc("surface.list")["surfaces"])
             rpc("notification.clear")
             assert rpc("workspace.current")["unread_count"] == 0
             checks.append("workspace removal and notification ownership")
@@ -189,6 +221,11 @@ def main():
             assert len(rpc("surface.list")["surfaces"]) == count
             assert any(s["cwd"] == str(new_cwd) for s in rpc("surface.list")["surfaces"])
             checks.append("pane close and layout/directory restart restore")
+            original_ids = {s["id"] for s in rpc("surface.list")["surfaces"]}
+            duplicate = rpc("workspace.duplicate", {"workspace_id": workspace_id})
+            assert rpc("workspace.current")["id"] != workspace_id, duplicate
+            assert original_ids.isdisjoint({s["id"] for s in rpc("surface.list")["surfaces"]})
+            checks.append("duplicated workspaces receive independent identities")
         except BaseException:
             stop()
             log.flush()

@@ -6,15 +6,17 @@ use gpui_component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_component::{IconName, Sizable};
 use gpui_terminal::TerminalView;
 use gpui_terminal::TerminalViewEvent;
+use rumux_core::status::SurfaceStatus;
 use rumux_core::terminal_protocol::{TerminalProtocolParser, TerminalSignal};
 
-use crate::terminal_surface::{spawn_terminal_view, terminal_error_view};
+use crate::terminal_surface::{spawn_terminal_view_for_surface, terminal_error_view};
 
 /// A terminal panel that implements the Panel trait for use in DockArea.
 ///
 /// Focus is delegated to the inner TerminalView — TabPanel uses this
 /// to focus the terminal when this panel becomes active.
 pub struct TerminalPanel {
+    pub id: uuid::Uuid,
     terminal: Entity<TerminalView>,
     name: Option<String>,
     index: usize,
@@ -25,6 +27,8 @@ pub struct TerminalPanel {
     focus_subscription: Option<Subscription>,
     terminal_title: Option<String>,
     pub exited: bool,
+    pub status: SurfaceStatus,
+    pub status_message: Option<String>,
     pub unread: bool,
     protocol: TerminalProtocolParser,
     _output_subscription: Subscription,
@@ -51,6 +55,10 @@ impl TerminalPanel {
                     TerminalViewEvent::Output(bytes) => {
                         for signal in panel.protocol.feed(bytes) {
                             match &signal {
+                                TerminalSignal::Status(status) => {
+                                    panel.status = *status;
+                                    panel.status_message = None;
+                                }
                                 TerminalSignal::Title(title) => {
                                     panel.terminal_title =
                                         (!title.is_empty()).then(|| title.clone());
@@ -70,6 +78,7 @@ impl TerminalPanel {
                     }
                     TerminalViewEvent::Exited => {
                         panel.exited = true;
+                        panel.status = SurfaceStatus::Exited;
                         cx.emit(TerminalPanelEvent::Exited);
                     }
                 }
@@ -77,6 +86,7 @@ impl TerminalPanel {
             },
         );
         Self {
+            id: uuid::Uuid::new_v4(),
             terminal,
             name: None,
             index,
@@ -87,6 +97,8 @@ impl TerminalPanel {
             focus_subscription: None,
             terminal_title: None,
             exited: false,
+            status: SurfaceStatus::Idle,
+            status_message: None,
             unread: false,
             protocol: TerminalProtocolParser::default(),
             _output_subscription: subscription,
@@ -98,13 +110,24 @@ impl TerminalPanel {
         index: usize,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<Self> {
-        let terminal = spawn_terminal_view(&mut **cx, cwd, None)?;
-        Ok(Self::new(
+        Self::from_cwd_with_id(cwd, index, uuid::Uuid::new_v4(), cx)
+    }
+
+    fn from_cwd_with_id(
+        cwd: Option<&std::path::Path>,
+        index: usize,
+        id: uuid::Uuid,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<Self> {
+        let terminal = spawn_terminal_view_for_surface(&mut **cx, cwd, id)?;
+        let mut panel = Self::new(
             terminal,
             index,
             cwd.map(|path| path.to_string_lossy().to_string()),
             cx,
-        ))
+        );
+        panel.id = id;
+        Ok(panel)
     }
 
     pub fn set_name(&mut self, name: Option<String>) {
@@ -304,6 +327,7 @@ impl Panel for TerminalPanel {
         _cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let terminal = self.terminal.clone();
+        let agent_command = crate::config::RumuxConfig::load().agent_command;
         let cwd_for_new = self.cwd.clone();
         let cwd_for_split_right = self.cwd.clone();
         let cwd_for_split_down = self.cwd.clone();
@@ -383,10 +407,14 @@ impl Panel for TerminalPanel {
                         .ghost()
                         .compact()
                         .icon(IconName::Bot)
-                        .tooltip("Launch Claude")
+                        .tooltip("Launch Agent")
                         .on_click(move |_event, _window, cx| {
                             terminal.update(cx, |view, _cx| {
-                                view.write_to_pty(b"claude\n");
+                                if !agent_command.trim().is_empty() {
+                                    view.write_to_pty(
+                                        format!("{}\n", agent_command.trim()).as_bytes(),
+                                    );
+                                }
                             });
                         }),
                 ),
@@ -396,6 +424,7 @@ impl Panel for TerminalPanel {
     fn dump(&self, _cx: &App) -> PanelState {
         let mut state = PanelState::new(self);
         state.info = gpui_component::dock::PanelInfo::Panel(serde_json::json!({
+            "id": self.id.to_string(),
             "name": self.name,
             "index": self.index,
             "cwd": self.cwd,
@@ -684,9 +713,21 @@ pub fn register(cx: &mut App) {
 
             let panel: Entity<TerminalPanel> = cx.new(|cx| {
                 let cwd_path = cwd.as_deref().map(std::path::Path::new);
-                let term = spawn_terminal_view(cx, cwd_path, None)
-                    .unwrap_or_else(|error| terminal_error_view(cx, &error));
-                let mut p = TerminalPanel::new(term, index, cwd.clone(), cx);
+                let id = if let PanelInfo::Panel(ref val) = panel_state.info {
+                    val.get("id")
+                        .and_then(|id| id.as_str())
+                        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                        .unwrap_or_else(uuid::Uuid::new_v4)
+                } else {
+                    uuid::Uuid::new_v4()
+                };
+                let mut p = TerminalPanel::from_cwd_with_id(cwd_path, index, id, cx)
+                    .unwrap_or_else(|error| {
+                        let term = terminal_error_view(cx, &error);
+                        let mut panel = TerminalPanel::new(term, index, cwd.clone(), cx);
+                        panel.id = id;
+                        panel
+                    });
                 p.set_name(name);
                 p
             });

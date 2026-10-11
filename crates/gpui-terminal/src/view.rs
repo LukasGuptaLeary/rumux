@@ -619,6 +619,8 @@ impl TerminalView {
         };
 
         self.clear_selection();
+        self.state
+            .with_term_mut(|term| term.scroll_display(Scroll::Bottom));
         self.write_to_pty(&bytes);
         true
     }
@@ -726,6 +728,8 @@ impl TerminalView {
         }
 
         self.clear_selection();
+        self.state
+            .with_term_mut(|term| term.scroll_display(Scroll::Bottom));
         let bytes = self.paste_bytes(&text);
         self.write_to_pty(&bytes);
     }

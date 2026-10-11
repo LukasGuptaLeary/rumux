@@ -13,6 +13,7 @@ pub struct RumuxConfig {
     pub sidebar_width: f32,
     pub notification_command: Option<String>,
     pub desktop_notifications: bool,
+    pub agent_command: String,
 }
 
 impl Default for RumuxConfig {
@@ -25,6 +26,7 @@ impl Default for RumuxConfig {
             sidebar_width: 200.0,
             notification_command: None,
             desktop_notifications: true,
+            agent_command: "claude".to_string(),
         }
     }
 }

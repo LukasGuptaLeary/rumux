@@ -158,6 +158,7 @@ fn handle_tool_call(params: &Value) -> Result<Value> {
         "split_surface" => execute_rpc(name, "surface.split", Value::Object(arguments)),
         "close_surface" => execute_rpc(name, "surface.close", Value::Object(arguments)),
         "rename_surface" => execute_rpc(name, "surface.rename", Value::Object(arguments)),
+        "set_surface_status" => execute_rpc(name, "surface.set_status", Value::Object(arguments)),
         "next_surface" => execute_rpc(name, "surface.next", Value::Object(arguments)),
         "prev_surface" => execute_rpc(name, "surface.prev", Value::Object(arguments)),
         "zoom_surface" => execute_rpc(name, "surface.zoom", Value::Object(arguments)),
@@ -388,6 +389,19 @@ fn tool_definitions() -> Vec<Value> {
             ]),
         ),
         tool(
+            "set_surface_status",
+            "Report whether an agent is idle, working or needs input.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                ("surface_index", integer_schema("Surface index")),
+                (
+                    "status",
+                    json!({ "type": "string", "enum": ["idle", "working", "blocked"] }),
+                ),
+                ("message", string_schema("Optional short status detail")),
+            ]),
+        ),
+        tool(
             "zoom_surface",
             "Toggle zoom for the targeted surface pane.",
             json_schema_object([
@@ -511,7 +525,29 @@ fn tool_definitions() -> Vec<Value> {
     ]
 }
 
-fn tool(name: &str, description: &str, input_schema: Value) -> Value {
+fn tool(name: &str, description: &str, mut input_schema: Value) -> Value {
+    if let Some(properties) = input_schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    {
+        if properties.contains_key("workspace_index")
+            || matches!(
+                name,
+                "select_workspace" | "close_workspace" | "rename_workspace" | "duplicate_workspace"
+            )
+        {
+            properties.insert(
+                "workspace_id".into(),
+                string_schema("Stable workspace UUID; use one workspace selector"),
+            );
+        }
+        if properties.contains_key("surface_index") {
+            properties.insert(
+                "surface_id".into(),
+                string_schema("Stable surface UUID; can be used without a workspace selector"),
+            );
+        }
+    }
     json!({
         "name": name,
         "description": description,

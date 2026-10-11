@@ -9,12 +9,12 @@ use std::sync::Arc;
 use crate::config::RumuxConfig;
 use crate::theme;
 
-pub fn spawn_terminal_view(
+pub fn spawn_terminal_view_for_surface(
     cx: &mut App,
     cwd: Option<&Path>,
-    on_exit: Option<Box<dyn Fn(&mut Window, &mut App) + 'static>>,
+    id: uuid::Uuid,
 ) -> Result<Entity<TerminalView>> {
-    spawn_terminal_view_with_config(cx, cwd, on_exit, None, None)
+    spawn_terminal_view_with_config(cx, cwd, None, None, None, Some(id))
 }
 
 pub fn spawn_terminal_view_with_config(
@@ -23,6 +23,7 @@ pub fn spawn_terminal_view_with_config(
     on_exit: Option<Box<dyn Fn(&mut Window, &mut App) + 'static>>,
     config_override: Option<&RumuxConfig>,
     output_callback: Option<Arc<dyn Fn(&[u8]) + Send + Sync>>,
+    surface_id: Option<uuid::Uuid>,
 ) -> Result<Entity<TerminalView>> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
@@ -46,6 +47,9 @@ pub fn spawn_terminal_view_with_config(
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "rumux");
+    if let Some(id) = surface_id {
+        cmd.env("RUMUX_SURFACE_ID", id.to_string());
+    }
 
     if let Some(dir) = cwd {
         cmd.cwd(dir);

@@ -11,7 +11,7 @@ use clap_complete::Shell;
 #[command(
     name = "rumux",
     version,
-    about = "Git worktree lifecycle manager for parallel Claude Code sessions"
+    about = "Native terminal workspace control and git worktrees for coding agents"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -20,18 +20,22 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create a new worktree and launch Claude Code
+    /// Create a new worktree and launch a coding agent
     New {
         /// Branch name for the new worktree
         branch: String,
         /// Pass a prompt directly to Claude Code (runs claude -p)
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with = "no_agent")]
         prompt: Option<String>,
+        #[command(flatten)]
+        agent: shell::AgentOptions,
     },
-    /// Resume Claude Code in an existing worktree
+    /// Launch a coding agent in an existing worktree
     Start {
         /// Branch name of the worktree to resume
         branch: String,
+        #[command(flatten)]
+        agent: shell::AgentOptions,
     },
     /// Print worktree path (for use with shell cd wrapper)
     Cd {
@@ -132,8 +136,12 @@ fn main() {
         Commands::New {
             ref branch,
             ref prompt,
-        } => commands::new::run(branch, prompt.as_deref()),
-        Commands::Start { ref branch } => commands::start::run(branch),
+            ref agent,
+        } => commands::new::run(branch, prompt.as_deref(), agent),
+        Commands::Start {
+            ref branch,
+            ref agent,
+        } => commands::start::run(branch, agent),
         Commands::Cd { ref branch } => commands::cd::run(branch.as_deref()),
         Commands::Ls => commands::ls::run(),
         Commands::Merge { ref branch, squash } => commands::merge::run(branch.as_deref(), squash),

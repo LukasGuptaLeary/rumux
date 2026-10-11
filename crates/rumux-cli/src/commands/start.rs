@@ -1,12 +1,12 @@
 use anyhow::Result;
 use console::style;
 
-use crate::shell::launch_claude_continue;
+use crate::shell::{AgentOptions, launch_agent};
 use rumux_core::config::{find_repo_root, sanitize_branch_name, worktree_path};
 use rumux_core::errors::RumuxError;
 use rumux_core::git_ops::list_worktrees;
 
-pub fn run(branch: &str) -> Result<()> {
+pub fn run(branch: &str, agent: &AgentOptions) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let repo_root = find_repo_root(&cwd)?;
     let sanitized = sanitize_branch_name(branch);
@@ -29,11 +29,15 @@ pub fn run(branch: &str) -> Result<()> {
         return Err(RumuxError::WorktreeNotFound(sanitized).into());
     }
 
+    if agent.no_agent {
+        println!("{}", wt_path.display());
+        return Ok(());
+    }
     eprintln!(
         "{}",
-        style(format!("Resuming Claude Code in {}...", wt_path.display())).dim()
+        style(format!("Launching agent in {}...", wt_path.display())).dim()
     );
-    launch_claude_continue(&wt_path)?;
+    launch_agent(&wt_path, None, true, agent)?;
 
     Ok(())
 }

@@ -43,9 +43,32 @@ CI matrix is prepared but has not run. Compilation and smoke evidence above do
 not establish packaging, detached process survival, browser or SSH acceptance.
 No branch, PR, release or third-party comment has been published.
 
+## Workspace and automation checkpoint
+
+The second batch adds stable persisted UUIDs to workspaces and terminal panes,
+pins asynchronous RPC calls to their original target, gives duplicated panes
+independent identities, and exposes explicit agent activity through RPC, MCP,
+OSC 133 and the sidebar. Terminals export their own surface ID for CLI calls.
+The worktree CLI supports a selected agent executable, direct arguments and
+`--no-agent`, and propagates agent failures.
+
+Loopback TCP now requires a random per-profile token, rotated at startup. Unix
+token files are private (0600). The CLI and MCP bridge authenticate without
+exposing tokens in output. Direct clients must adopt the authentication field.
+
+Validation on macOS ARM64: 120 unit/integration tests plus 28 doctests passed;
+13 real desktop smoke checks passed in 3.79 seconds over Unix sockets and 14
+checks passed in 2.20 seconds over authenticated TCP. Linux ARM64 passed the
+same full test barrier and both smoke suites, in 1.24 and 1.25 seconds.
+The Linux source archive for this run has SHA-256
+`11ee4baa86965d3f8a436b968255f1aae0a5fd591a3f8e48851d3d7fdd6d142c`.
+The subsequent sidebar subscription correction was visually verified on macOS;
+the final local barrier and smoke runs also include that correction. A final
+focused CLI regression check rejects non-object RPC params before injecting a
+terminal's origin ID, avoiding a malformed-input panic (121 tests total).
+
 ## Next acceptance boundaries
 
-Stable workspace/pane identities and agent metadata precede durable terminal
-ownership. Browser and SSH workflows and three-platform installation proof
+Durable terminal ownership, browser and SSH workflows and three-platform installation proof
 remain required. Any product claim must distinguish configured gates from
 executed results, and restored layout from a still-running terminal process.

@@ -49,7 +49,7 @@ pub struct RootView {
 impl RootView {
     pub fn new(app_state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar_visible = app_state.read(cx).config.sidebar_visible;
-        let sidebar = cx.new(|_cx| WorkspaceSidebar::new(app_state.clone()));
+        let sidebar = cx.new(|cx| WorkspaceSidebar::new(app_state.clone(), cx));
 
         // Initialize workspaces now that we have window access
         app_state.update(cx, |state, cx| {

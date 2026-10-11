@@ -39,7 +39,7 @@ rumux/
 │   │   ├── src/main.rs           # Clap App, subcommand dispatch
 │   │   ├── src/commands/         # One file per subcommand
 │   │   ├── src/hook.rs           # Setup hook discovery and execution
-│   │   └── src/shell.rs          # Claude CLI detection and launch
+│   │   └── src/shell.rs          # Configurable agent detection and launch
 │   ├── rumux-core/               # Shared library
 │   │   ├── src/config.rs         # Repo root detection, path helpers, branch sanitization
 │   │   ├── src/errors.rs         # Typed error definitions (thiserror)
@@ -66,7 +66,7 @@ rumux/
 ## Architecture
 
 ### CLI (`rumux`)
-Single binary built with clap (derive API). All git operations use `git2` (libgit2). The only `Command` usage is for launching `claude` and running setup hooks.
+Single binary built with clap (derive API). All git operations use `git2` (libgit2). Agent executables are selected by `--agent` or `RUMUX_AGENT`; arguments are passed directly with `Command`. `--no-agent` supports worktree preparation without an agent installed. Hook generation still uses Claude.
 
 ### Desktop App (`rumux-app`)
 Pure Rust, GPU-accelerated via GPUI framework (from Zed).

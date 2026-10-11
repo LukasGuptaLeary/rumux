@@ -10,6 +10,7 @@ pub enum TerminalSignal {
     Notification { title: String, body: String },
     Title(String),
     WorkingDirectory(String),
+    Status(crate::status::SurfaceStatus),
 }
 
 #[derive(Default)]
@@ -98,6 +99,13 @@ impl TerminalProtocolParser {
     fn parse(&mut self, content: &str) -> Option<TerminalSignal> {
         let (code, payload) = content.split_once(';')?;
         match code {
+            "133" => match payload.split(';').next()? {
+                "A" | "D" => Some(TerminalSignal::Status(crate::status::SurfaceStatus::Idle)),
+                "C" => Some(TerminalSignal::Status(
+                    crate::status::SurfaceStatus::Working,
+                )),
+                _ => None,
+            },
             "0" | "2" => Some(TerminalSignal::Title(clean_text(payload))),
             "7" => {
                 let uri = url::Url::parse(payload).ok()?;
@@ -197,6 +205,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shell_command_markers_report_activity_across_fragments() {
+        let mut parser = TerminalProtocolParser::default();
+        assert!(parser.feed(b"\x1b]133;C").is_empty());
+        assert_eq!(
+            parser.feed(b"\x07"),
+            vec![TerminalSignal::Status(
+                crate::status::SurfaceStatus::Working
+            )]
+        );
+        assert_eq!(
+            parser.feed(b"\x1b]133;D;0\x07\x1b]133;A\x07"),
+            vec![
+                TerminalSignal::Status(crate::status::SurfaceStatus::Idle),
+                TerminalSignal::Status(crate::status::SurfaceStatus::Idle)
+            ]
+        );
+        assert!(parser.feed(b"\x1b]133;B\x07").is_empty());
+    }
+
+    #[test]
     fn notifications_survive_every_read_boundary_including_utf8_and_st() {
         let bytes =
             "before\x1b]777;notify;Ready 🦀;Review;please\x1b\\after\x1b]9;Done\x07".as_bytes();
@@ -278,12 +306,14 @@ mod tests {
     #[test]
     fn directory_uri_is_decoded_and_non_file_urls_are_rejected() {
         let mut parser = TerminalProtocolParser::default();
-        let expected = url::Url::parse("file:///tmp/my%20project")
-            .unwrap()
-            .to_file_path()
-            .unwrap();
+        let uri = if cfg!(windows) {
+            "file:///C:/my%20project"
+        } else {
+            "file:///tmp/my%20project"
+        };
+        let expected = url::Url::parse(uri).unwrap().to_file_path().unwrap();
         assert_eq!(
-            parser.feed(b"\x1b]7;file:///tmp/my%20project\x07"),
+            parser.feed(format!("\x1b]7;{uri}\x07").as_bytes()),
             vec![TerminalSignal::WorkingDirectory(
                 expected.to_string_lossy().into_owned()
             )]

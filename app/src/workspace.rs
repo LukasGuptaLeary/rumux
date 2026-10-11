@@ -26,6 +26,7 @@ pub enum WorkspaceEvent {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SurfaceSummary {
+    pub id: String,
     pub index: usize,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,10 +34,13 @@ pub struct SurfaceSummary {
     pub active_tab: bool,
     pub target: bool,
     pub exited: bool,
+    pub status: rumux_core::status::SurfaceStatus,
+    pub status_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceSummary {
+    pub id: String,
     pub index: usize,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,6 +52,7 @@ pub struct WorkspaceSummary {
     pub unread_count: usize,
     pub active: bool,
     pub surface_count: usize,
+    pub status: rumux_core::status::SurfaceStatus,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -66,6 +71,7 @@ struct SurfaceTarget {
 }
 
 pub struct Workspace {
+    pub id: Uuid,
     pub name: String,
     pub dock_area: Entity<DockArea>,
     pub unread_count: usize,
@@ -102,18 +108,27 @@ impl Workspace {
             .next_terminal_index
             .unwrap_or_else(|| next_terminal_index_from_state(session.dock_area.as_ref()));
 
-        Self::build(
+        let id = session
+            .id
+            .as_deref()
+            .and_then(|id| Uuid::parse_str(id).ok());
+        let mut workspace = Self::build(
             session.name,
             cwd,
             session.dock_area,
             Some(next_terminal_index),
             window,
             cx,
-        )
+        );
+        if let Some(id) = id {
+            workspace.id = id;
+        }
+        workspace
     }
 
     pub fn to_session(&self, cx: &App) -> WorkspaceSession {
         WorkspaceSession {
+            id: Some(self.id.to_string()),
             name: self.name.clone(),
             cwd: self.cwd.clone().unwrap_or_default(),
             dock_area: Some(self.dock_area.read(cx).dump(cx)),
@@ -158,6 +173,7 @@ impl Workspace {
         }
 
         let mut workspace = Self {
+            id: Uuid::new_v4(),
             name,
             dock_area,
             unread_count: 0,
@@ -370,6 +386,7 @@ impl Workspace {
 
     pub fn summary(&self, index: usize, active: bool, cx: &App) -> WorkspaceSummary {
         WorkspaceSummary {
+            id: self.id.to_string(),
             index,
             name: self.name.clone(),
             cwd: self.cwd.clone(),
@@ -378,6 +395,7 @@ impl Workspace {
             unread_count: self.unread_count,
             active,
             surface_count: self.list_surfaces(cx).len(),
+            status: self.activity_status(cx),
         }
     }
 
@@ -387,15 +405,61 @@ impl Workspace {
             .map(|target| {
                 let panel = target.panel.read(cx);
                 SurfaceSummary {
+                    id: panel.id.to_string(),
                     index: panel.index(),
                     title: panel.display_name(),
                     cwd: panel.cwd().map(str::to_string),
                     active_tab: target.active_tab,
                     target: target.target,
                     exited: panel.exited,
+                    status: panel.status,
+                    status_message: panel.status_message.clone(),
                 }
             })
             .collect()
+    }
+
+    pub fn set_surface_status(
+        &mut self,
+        surface_index: Option<usize>,
+        status: rumux_core::status::SurfaceStatus,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) = self.resolve_surface_target(surface_index, cx) else {
+            return false;
+        };
+        target.panel.update(cx, |panel, cx| {
+            panel.status = if panel.exited {
+                rumux_core::status::SurfaceStatus::Exited
+            } else {
+                status
+            };
+            panel.status_message = message;
+            cx.notify();
+        });
+        cx.notify();
+        true
+    }
+
+    pub fn activity_status(&self, cx: &App) -> rumux_core::status::SurfaceStatus {
+        use rumux_core::status::SurfaceStatus;
+        let surfaces = self.list_surfaces(cx);
+        if surfaces
+            .iter()
+            .any(|surface| surface.status == SurfaceStatus::Blocked)
+        {
+            SurfaceStatus::Blocked
+        } else if surfaces
+            .iter()
+            .any(|surface| surface.status == SurfaceStatus::Working)
+        {
+            SurfaceStatus::Working
+        } else if !surfaces.is_empty() && surfaces.iter().all(|surface| surface.exited) {
+            SurfaceStatus::Exited
+        } else {
+            SurfaceStatus::Idle
+        }
     }
 
     pub fn focus_surface(

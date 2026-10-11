@@ -75,8 +75,8 @@ Current desktop support policy lives in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 | Command | Description |
 |---------|-------------|
-| `rumux new <branch> [-p <prompt>]` | Create a new worktree + branch, run setup hook, launch Claude Code |
-| `rumux start <branch>` | Resume Claude Code in an existing worktree |
+| `rumux new <branch> [-p <prompt>] [--agent <program>] [--no-agent]` | Create a worktree, run setup and optionally launch an agent |
+| `rumux start <branch> [--agent <program>] [--no-agent]` | Launch an agent in an existing worktree |
 | `rumux cd [branch]` | Print worktree path (repo root if no branch given) |
 | `rumux ls` | List active worktrees |
 | `rumux merge [branch] [--squash]` | Merge a worktree branch into the current branch |
@@ -192,12 +192,42 @@ The MCP bridge is intentionally thin:
 | Ctrl/Cmd+B | Toggle sidebar |
 | Ctrl/Cmd+Q | Quit |
 
-## Setup Hooks
+## Agent control and profiles
 
 For testing separate desktop profiles, set `RUMUX_CONFIG_DIR` and
 `RUMUX_RUNTIME_DIR` together with a unique `RUMUX_SOCKET_PATH` (Unix) or
 `RUMUX_SOCKET_ADDR` (loopback TCP). Session saves are atomic with a valid-state
 backup. Damaged or unsupported future sessions are preserved and reported.
+
+Use `--agent codex` (or another executable) and repeat `--agent-arg` to pass its
+arguments directly. `RUMUX_AGENT` sets the CLI default. The compatibility default
+is Claude: `new --prompt` uses `-p`, and `start` uses `--continue` when no custom
+arguments are given. Other programs receive the prompt as one final argument;
+their resume flags belong in `--agent-arg`. `--no-agent` prints the prepared
+worktree path. Set `agent_command = "codex"` in `config.toml` to change the
+terminal toolbar's launch command.
+
+Workspace and surface summaries include stable UUIDs in `id`. Prefer
+`workspace_id` and `surface_id` selectors for automation; numeric selectors
+remain available. IDs survive restart and copies receive fresh IDs. A
+`surface_id` alone finds its workspace. Asynchronous output waits stay bound to
+the original surface when focus or workspace order changes. Terminals export
+`RUMUX_SURFACE_ID`, which the CLI uses as its default surface target.
+
+Agents can report activity with `surface.set_status`, for example
+`{"surface_id":"<uuid>","status":"blocked","message":"Review requested"}`.
+The MCP bridge exposes the same operation. Supported states are `idle`,
+`working` and `blocked`; process exit sets `exited`. OSC 133 prompt/command
+markers update activity when provided by shell integration.
+
+Loopback TCP requires a per-profile token in `rpc-<port>.token` under the Rumux
+config directory. The CLI and MCP bridge read it automatically. Direct TCP
+clients must include `auth_token` in each request; the server rotates it at
+startup. Unix sockets use filesystem access permissions. The legacy numeric
+`workspace_id` in notification responses remains an index; use workspace and
+surface summary `id` values for stable targeting.
+
+## Setup Hooks
 
 rumux can automatically set up new worktrees (install dependencies, symlink config files, etc.) by running a hook script.
 

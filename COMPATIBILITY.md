@@ -56,6 +56,13 @@ Expectations:
 - New fields may be added to JSON responses without being considered a breaking change.
 - Method removal or semantic changes should be called out in the changelog and release notes.
 - The `rumux mcp` bridge is a compatibility layer over this same local RPC contract, not a separate control plane.
+- Workspace and surface summary `id` fields are stable UUIDs, persisted in
+  schema 3. Older sessions receive IDs on load. Selectors accept `workspace_id`
+  and `surface_id`; indices are retained for compatibility. Copies get fresh
+  IDs. Long-running requests pin their initial target.
+- Direct TCP clients now require the profile's `auth_token` on every request.
+  The CLI/MCP bridge handle authentication automatically. This intentionally
+  closes the previous unauthenticated loopback control path.
 
 ## Desktop Instance Model
 
