@@ -185,6 +185,23 @@ host, user SSH keys or known-hosts files were changed by these tests.
 
 ## Next acceptance boundaries
 
+The user approved SSH commit `b7913f1` and the remaining locally checked
+completion work on the existing public branch and draft PR #9. In
+[CI run 38170021000](https://github.com/LukasGuptaLeary/rumux/actions/runs/38170021000),
+the Windows constructor correction `e6de563` passed browser creation, DOM,
+evaluation, form actions and MCP checks. Closing a terminal in a mixed layout
+then overflowed the main-thread stack. Linux/macOS, formatting, CLI/core and
+Linux packaging passed. Windows browser acceptance remains open.
+
+The follow-up caches Windows native bounds and visibility transitions before
+calling APIs that can synchronously deliver window messages. It does not raise
+the stack limit or remove mixed-layout checks. A first cross-platform version
+failed Linux's workspace-visibility check; the correction is now Windows-only.
+The locally qualified snapshot contains the committed SSH batch and this
+browser correction, without the unfinished terminal-service work. macOS ARM64
+and Linux ARM64 each passed 129 workspace tests and 28 doctests, plus the full
+25-check Unix-socket and 26-check authenticated-TCP browser/SSH suites.
+
 Durable terminal ownership, Windows browser qualification, SSH workflows and three-platform installation proof
 remain required. Any product claim must distinguish configured gates from
 executed results, and restored layout from a still-running terminal process.

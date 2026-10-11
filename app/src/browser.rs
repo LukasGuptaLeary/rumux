@@ -87,6 +87,10 @@ pub struct BrowserView {
     pub error: Option<String>,
     selected: bool,
     allowed: bool,
+    #[cfg(target_os = "windows")]
+    native_bounds: Option<Bounds<Pixels>>,
+    #[cfg(target_os = "windows")]
+    native_visible: bool,
     _input_subscription: Subscription,
     _native_task: Task<()>,
     _creation_task: Option<Task<()>>,
@@ -209,6 +213,10 @@ impl BrowserView {
             error,
             selected: true,
             allowed: true,
+            #[cfg(target_os = "windows")]
+            native_bounds: None,
+            #[cfg(target_os = "windows")]
+            native_visible: false,
             _input_subscription: subscription,
             _native_task: task,
             _creation_task: creation_task,
@@ -273,13 +281,44 @@ impl BrowserView {
     pub fn set_visibility(&mut self, selected: bool, allowed: bool) {
         self.selected = selected;
         self.allowed = allowed;
-        if let Some(native) = &self.native {
-            let _ = native.set_visible(selected && allowed);
+        #[cfg(target_os = "windows")]
+        let visible = selected
+            && allowed
+            && self
+                .native_bounds
+                .is_some_and(|bounds| bounds.size.width > px(0.0) && bounds.size.height > px(0.0));
+        #[cfg(not(target_os = "windows"))]
+        let visible = selected && allowed;
+        self.sync_native_visibility(visible);
+    }
+
+    fn sync_native_visibility(&mut self, visible: bool) {
+        #[cfg(target_os = "windows")]
+        if self.native_visible == visible {
+            return;
         }
+        let Some(native) = &self.native else {
+            return;
+        };
+        // Record the transition before calling a native API that may deliver
+        // synchronous window messages, so a re-entrant layout cannot repeat it.
+        #[cfg(target_os = "windows")]
+        {
+            self.native_visible = visible;
+        }
+        let _ = native.set_visible(visible);
     }
 
     fn layout_native(&mut self, bounds: Bounds<Pixels>) {
+        #[cfg(target_os = "windows")]
+        if self.native_bounds == Some(bounds) {
+            return;
+        }
         if let Some(native) = &self.native {
+            #[cfg(target_os = "windows")]
+            {
+                self.native_bounds = Some(bounds);
+            }
             let _ = native.set_bounds(wry::Rect {
                 position: wry::dpi::LogicalPosition::new(
                     f64::from(bounds.origin.x),
@@ -292,7 +331,7 @@ impl BrowserView {
                 )
                 .into(),
             });
-            let _ = native.set_visible(
+            self.sync_native_visibility(
                 self.selected
                     && self.allowed
                     && bounds.size.width > px(0.0)
@@ -439,14 +478,13 @@ impl Render for BrowserView {
         }
         toolbar = toolbar.child(div().flex_1().child(Input::new(&self.address).small()));
         let content = if let Some(error) = &self.error {
-            if let Some(native) = &self.native {
-                let _ = native.set_visible(false);
-            }
+            let error = error.clone();
+            self.sync_native_visibility(false);
             div()
                 .flex_1()
                 .p(px(20.0))
                 .text_color(rgb(crate::theme::TEXT_SECONDARY))
-                .child(error.clone())
+                .child(error)
                 .into_any_element()
         } else {
             canvas(
