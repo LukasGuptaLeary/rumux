@@ -432,3 +432,18 @@ The common harness passed installed macOS 36/37 checks in 10.58/9.99 s and
 Linux's retained optimized binaries passed 36/37 checks in 8.78/8.06 s. No Rust
 code changed in this fixture correction. Python compilation, actionlint and
 whitespace checks passed; native Windows cleanup still requires execution.
+
+At `f285796`, the Windows fixture's strict client connection and Windows-file
+cleanup passed. The debug app proceeded through mixed browser/terminal close,
+layout changes, browser restart restore and all service checks without the prior
+stack overflow. Both native Windows suites then reached SSH fixture creation and
+found `/run/sshd` missing. WSL had stopped after the standalone fixture and its
+volatile `/run` directory was recreated without that server prerequisite.
+
+Each owned WSL fixture now creates its privilege-separation directory before
+starting sshd. The standalone native proof explicitly terminates its already
+closed, uniquely owned distribution between two connections, verifying a cold
+WSL restart and complete Windows temporary-file cleanup. Remote cleanup errors
+also propagate instead of being silently ignored. This Windows-only harness
+correction passed Python compilation and whitespace checks; no Rust or common
+POSIX harness code changed. Full native Windows SSH qualification remains open.

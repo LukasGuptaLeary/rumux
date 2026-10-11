@@ -47,7 +47,9 @@ class WslSshFixture(SshFixture):
                 f"AuthorizedKeysFile {self.remote_root}/authorized_keys\nPidFile {self.remote_root}/sshd.pid\n"
                 "PasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\n"
                 "PermitRootLogin prohibit-password\nAllowTcpForwarding local\nLogLevel INFO\n")
-        commands = [shlex.join(["mkdir", "-p", str(self.directory), str(self.changed_directory)]),
+        # /run is volatile: WSL may stop after the standalone fixture closes.
+        commands = ["mkdir -p /run/sshd", "chmod 755 /run/sshd",
+                    shlex.join(["mkdir", "-p", str(self.directory), str(self.changed_directory)]),
                     "chmod 700 " + shlex.quote(str(self.remote_root)),
                     "printf %s " + shlex.quote(public) + " > " + str(self.remote_root / "authorized_keys"),
                     "chmod 600 " + str(self.remote_root / "authorized_keys"),
@@ -85,20 +87,25 @@ fi
 rm -rf -- {directory}
 """
         try:
-            self.remote(script, check=False)
+            self.remote(script)
         finally:
             super().cleanup()
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(prefix="rumux-windows-ssh-") as root:
-        with WslSshFixture(root) as fixture:
-            connection = fixture.connection
-            known = connection["known_hosts_file"].replace("\\", "\\\\").replace('"', '\\"')
-            result = subprocess.run(["ssh", "-T", "-F", connection["config_file"],
-                "-i", connection["identity_file"], "-p", str(connection["port"]),
-                "-o", f'UserKnownHostsFile="{known}"', "-o", "StrictHostKeyChecking=yes",
-                "--", "root@127.0.0.1", "printf rumux-windows-ssh-fixture"],
-                capture_output=True, text=True, timeout=10)
-            assert result.returncode == 0 and result.stdout == "rumux-windows-ssh-fixture", (result.stdout, result.stderr)
-            print(json.dumps({"native_windows_ssh_fixture": "passed"}))
+    for generation in range(2):
+        with tempfile.TemporaryDirectory(prefix="rumux-windows-ssh-") as root:
+            with WslSshFixture(root) as fixture:
+                connection = fixture.connection
+                known = connection["known_hosts_file"].replace("\\", "\\\\").replace('"', '\\"')
+                result = subprocess.run(["ssh", "-T", "-F", connection["config_file"],
+                    "-i", connection["identity_file"], "-p", str(connection["port"]),
+                    "-o", f'UserKnownHostsFile="{known}"', "-o", "StrictHostKeyChecking=yes",
+                    "--", "root@127.0.0.1", "printf rumux-windows-ssh-fixture"],
+                    capture_output=True, text=True, timeout=10)
+                assert result.returncode == 0 and result.stdout == "rumux-windows-ssh-fixture", (result.stdout, result.stderr)
+        if generation == 0:
+            # The validated, uniquely owned distro has no active fixture now.
+            # Force a cold restart to prove volatile directories are recreated.
+            subprocess.run(["wsl.exe", "--terminate", fixture.distribution], check=True, timeout=30)
+    print(json.dumps({"native_windows_ssh_fixture": "passed", "cold_wsl_restart": True}))
