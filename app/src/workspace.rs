@@ -10,12 +10,18 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::session::WorkspaceSession;
-use crate::terminal_panel::TerminalPanel;
-use crate::terminal_surface::spawn_terminal_view;
+use crate::terminal_panel::{TerminalPanel, TerminalPanelEvent};
+use crate::terminal_surface::terminal_error_view;
 use crate::theme;
+use rumux_core::terminal_protocol::TerminalSignal;
 
 pub enum WorkspaceEvent {
     PersistRequested,
+    Notification {
+        surface_index: usize,
+        title: String,
+        body: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,6 +32,7 @@ pub struct SurfaceSummary {
     pub cwd: Option<String>,
     pub active_tab: bool,
     pub target: bool,
+    pub exited: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +74,7 @@ pub struct Workspace {
     pub cwd: Option<String>,
     next_terminal_index: usize,
     _dock_subscription: Subscription,
+    panel_subscriptions: Vec<(EntityId, Subscription)>,
 }
 
 impl Workspace {
@@ -127,6 +135,7 @@ impl Workspace {
         });
         let dock_subscription = cx.subscribe(&dock_area, |workspace, _, event: &DockEvent, cx| {
             if matches!(event, DockEvent::LayoutChanged) {
+                workspace.track_terminal_panels(cx);
                 workspace.next_terminal_index = workspace.current_next_terminal_index(cx);
                 cx.emit(WorkspaceEvent::PersistRequested);
             }
@@ -148,7 +157,7 @@ impl Workspace {
             });
         }
 
-        Self {
+        let mut workspace = Self {
             name,
             dock_area,
             unread_count: 0,
@@ -157,6 +166,69 @@ impl Workspace {
             cwd,
             next_terminal_index: next_terminal_index.unwrap_or(1).max(1),
             _dock_subscription: dock_subscription,
+            panel_subscriptions: Vec::new(),
+        };
+        workspace.track_terminal_panels(cx);
+        workspace
+    }
+
+    fn track_terminal_panels(&mut self, cx: &mut Context<Self>) {
+        let panels: Vec<_> = self
+            .surface_targets(cx)
+            .into_iter()
+            .map(|target| target.panel)
+            .collect();
+        self.panel_subscriptions
+            .retain(|(id, _)| panels.iter().any(|panel| panel.entity_id() == *id));
+        for panel in panels {
+            let id = panel.entity_id();
+            if self
+                .panel_subscriptions
+                .iter()
+                .any(|(tracked, _)| *tracked == id)
+            {
+                continue;
+            }
+            let subscription = cx.subscribe(
+                &panel,
+                |workspace, panel, event: &TerminalPanelEvent, cx| {
+                    match event {
+                        TerminalPanelEvent::Signal(TerminalSignal::Notification {
+                            title,
+                            body,
+                        }) => {
+                            cx.emit(WorkspaceEvent::Notification {
+                                surface_index: panel.read(cx).index(),
+                                title: title.clone(),
+                                body: body.clone(),
+                            });
+                        }
+                        TerminalPanelEvent::Signal(TerminalSignal::WorkingDirectory(_)) => {
+                            if let Some(target) = workspace.resolve_surface_target(None, cx) {
+                                workspace.cwd = target.panel.read(cx).cwd().map(str::to_string);
+                            }
+                            cx.emit(WorkspaceEvent::PersistRequested);
+                        }
+                        _ => {}
+                    }
+                    cx.notify();
+                },
+            );
+            self.panel_subscriptions.push((id, subscription));
+        }
+    }
+
+    pub fn target_terminal(&self, cx: &App) -> Option<Entity<gpui_terminal::TerminalView>> {
+        self.resolve_surface_target(None, cx)
+            .map(|target| target.panel.read(cx).terminal())
+    }
+
+    pub fn set_unread_surfaces(&mut self, indices: Vec<usize>, cx: &mut Context<Self>) {
+        for target in self.surface_targets(cx) {
+            target.panel.update(cx, |panel, cx| {
+                panel.unread = indices.contains(&panel.index());
+                cx.notify();
+            });
         }
     }
 
@@ -186,16 +258,23 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Entity<TerminalPanel> {
         cx.new(|cx| {
-            TerminalPanel::from_cwd(cwd, index, cx).unwrap_or_else(|_| {
-                let term =
-                    spawn_terminal_view(&mut **cx, None, None).expect("failed to spawn terminal");
-                TerminalPanel::new(term, index, None, cx)
+            TerminalPanel::from_cwd(cwd, index, cx).unwrap_or_else(|error| {
+                let term = terminal_error_view(&mut **cx, &error);
+                TerminalPanel::new(
+                    term,
+                    index,
+                    cwd.map(|path| path.to_string_lossy().into_owned()),
+                    cx,
+                )
             })
         })
     }
 
     pub fn add_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let cwd = self.cwd.clone();
+        let cwd = self
+            .resolve_surface_target(None, cx)
+            .and_then(|target| target.panel.read(cx).cwd().map(str::to_string))
+            .or_else(|| self.cwd.clone());
         let (_, _, panel_view) =
             self.new_terminal_panel_view(cwd.as_deref().map(std::path::Path::new), cx);
 
@@ -213,7 +292,10 @@ impl Workspace {
     }
 
     pub fn split(&mut self, placement: Placement, window: &mut Window, cx: &mut Context<Self>) {
-        let cwd = self.cwd.clone();
+        let cwd = self
+            .resolve_surface_target(None, cx)
+            .and_then(|target| target.panel.read(cx).cwd().map(str::to_string))
+            .or_else(|| self.cwd.clone());
         let (_, _, panel_view) =
             self.new_terminal_panel_view(cwd.as_deref().map(std::path::Path::new), cx);
 
@@ -310,6 +392,7 @@ impl Workspace {
                     cwd: panel.cwd().map(str::to_string),
                     active_tab: target.active_tab,
                     target: target.target,
+                    exited: panel.exited,
                 }
             })
             .collect()
@@ -452,6 +535,8 @@ impl Workspace {
                 dock_area.set_center(split, window, cx);
                 dock_area.remember_tab_panel(new_target_tab_panel);
             });
+            self.track_terminal_panels(cx);
+            cx.emit(WorkspaceEvent::PersistRequested);
             cx.notify();
             Some(index)
         } else if surface_index.is_none() {

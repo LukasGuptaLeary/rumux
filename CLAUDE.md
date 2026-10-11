@@ -18,6 +18,12 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace
 
+# macOS without a precompiled Metal toolchain
+cargo test --workspace --features rumux-app/runtime-shaders --locked
+
+# Real desktop/PTY/CLI/MCP integration (isolated configuration)
+python3 scripts/smoke-desktop.py
+
 # Install from the current checkout
 cargo install --path crates/rumux-cli
 cp target/release/rumux-app ~/.cargo/bin/
@@ -51,7 +57,7 @@ rumux/
 │       ├── workspace.rs          # Workspace entity backed by DockArea
 │       ├── terminal_surface.rs   # PTY spawning + TerminalView creation
 │       ├── command_palette.rs    # Fuzzy command palette overlay (Ctrl+Shift+P)
-│       ├── notifications.rs      # OSC 777/99/9 parser
+│       ├── notifications.rs      # Notification model
 │       ├── socket_server.rs      # Local RPC transport (Unix socket or loopback TCP)
 │       ├── session.rs            # Session save/restore
 │       └── theme.rs              # Catppuccin Mocha color palette + UI colors
@@ -76,7 +82,7 @@ Pure Rust, GPU-accelerated via GPUI framework (from Zed).
 The legacy `v1` desktop path has been removed. Files under `app/src/` are the canonical shell.
 
 ### Vendored gpui-terminal
-The `crates/gpui-terminal/` directory is a vendored copy of https://github.com/zortax/gpui-terminal with one patch: the div background color uses the terminal palette instead of a hardcoded value.
+The `crates/gpui-terminal/` directory is a vendored copy of https://github.com/zortax/gpui-terminal. Rumux patches include palette rendering, scrollback and selection, literal search, terminal protocol replies, bounded output delivery and pane lifecycle hooks. It is a workspace member so its tests run in the full local barrier. Keep changes focused and preserve the upstream license. The streaming OSC parser lives in `rumux-core::terminal_protocol`.
 
 ## Conventions
 

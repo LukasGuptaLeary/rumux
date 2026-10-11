@@ -100,6 +100,12 @@ enum Commands {
         /// Notification body
         #[arg(long)]
         body: String,
+        /// Workspace index (defaults to the active workspace)
+        #[arg(long = "workspace")]
+        workspace_index: Option<usize>,
+        /// Terminal index within the workspace
+        #[arg(long = "surface")]
+        surface_index: Option<usize>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -146,8 +152,10 @@ fn main() {
         Commands::Notify {
             ref title,
             ref body,
+            workspace_index,
+            surface_index,
             json,
-        } => commands::socket_client::run_notify(title, body, json),
+        } => commands::socket_client::run_notify(title, body, workspace_index, surface_index, json),
         Commands::Rpc {
             ref method,
             ref params,

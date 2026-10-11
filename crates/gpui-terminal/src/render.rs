@@ -488,7 +488,7 @@ impl TerminalRenderer {
 
         // Iterate over visible lines
         for line_idx in 0..num_lines {
-            let line = Line(line_idx as i32);
+            let line = Line(line_idx as i32 - grid.display_offset() as i32);
 
             // Collect cells for this line
             let cells: Vec<(usize, Cell)> = (0..num_cols)
@@ -716,6 +716,13 @@ impl TerminalRenderer {
         }
 
         // Paint cursor
+        if grid.display_offset() != 0
+            || !term
+                .mode()
+                .contains(alacritty_terminal::term::TermMode::SHOW_CURSOR)
+        {
+            return;
+        }
         let cursor_point = grid.cursor.point;
         let cursor_x = origin.x + self.cell_width * (cursor_point.column.0 as f32);
         let cursor_y = origin.y + self.cell_height * (cursor_point.line.0 as f32);

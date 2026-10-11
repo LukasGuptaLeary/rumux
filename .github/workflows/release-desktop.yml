@@ -68,6 +68,10 @@ jobs:
         with:
           key: release-desktop-${{ matrix.target }}
 
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: sudo bash scripts/install-linux-deps.sh
+
       - name: Package desktop artifact
         shell: bash
         run: |

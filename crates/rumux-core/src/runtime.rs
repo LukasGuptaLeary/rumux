@@ -58,6 +58,9 @@ fn endpoint_tag(endpoint: &IpcEndpoint) -> String {
 }
 
 pub fn rumux_config_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("RUMUX_CONFIG_DIR").filter(|value| !value.is_empty()) {
+        return PathBuf::from(path);
+    }
     dirs::config_dir()
         .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
         .unwrap_or_else(|| PathBuf::from("."))

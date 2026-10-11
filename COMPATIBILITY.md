@@ -16,6 +16,9 @@ Notes:
 - Linux desktop builds assume the usual X11 and/or Wayland runtime libraries for GPUI.
 - macOS desktop release artifacts are currently unsigned and not notarized.
 - Windows desktop support is an active validation target, not a compatibility promise yet.
+- The completion branch adds native build/test/smoke gates for Linux, macOS and
+  Windows. A configured gate is not evidence that it has passed; Windows remains
+  unvalidated until the native runner completes.
 
 ## On-Disk State
 
@@ -29,6 +32,11 @@ Compatibility expectations:
   - migrate the data automatically, or
   - discard only the incompatible portion and document the behavior in release notes.
 - Forward compatibility is not guaranteed. Older builds may refuse to load state created by newer builds.
+- Saves replace the session atomically and retain `session.backup.json` from the
+  preceding valid save. Recovery preserves the damaged primary as an
+  `invalid-<uuid>.json` file. If no valid backup exists, or the primary has a
+  newer schema, the app reports the failure and disables session writes for that
+  run so the original can be recovered.
 
 ## Worktree Layout Compatibility
 

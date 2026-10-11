@@ -41,6 +41,8 @@ pub struct RootView {
     notification_panel: Option<Entity<NotificationPanel>>,
     find_bar: Option<Entity<FindBar>>,
     sidebar_visible: bool,
+    find_workspace: Option<EntityId>,
+    _state_subscription: Subscription,
     pub focus_handle: FocusHandle,
 }
 
@@ -54,6 +56,17 @@ impl RootView {
             state.init_workspaces(window, cx);
         });
 
+        let state_subscription = cx.observe(&app_state, |root: &mut Self, state, cx| {
+            let current = state.read(cx).active_workspace().entity_id();
+            if root.find_workspace.is_some_and(|id| id != current) {
+                if let Some(bar) = root.find_bar.take() {
+                    bar.update(cx, |bar, cx| bar.clear(cx));
+                }
+                root.find_workspace = None;
+            }
+            cx.notify();
+        });
+
         Self {
             app_state,
             sidebar,
@@ -61,6 +74,8 @@ impl RootView {
             notification_panel: None,
             find_bar: None,
             sidebar_visible,
+            find_workspace: None,
+            _state_subscription: state_subscription,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -195,25 +210,30 @@ impl Render for RootView {
                 cx.notify();
             }))
             .on_action(cx.listener(|root, _: &JumpToUnread, window, cx| {
-                let unread_workspace = {
-                    let state = root.app_state.read(cx);
-                    state
-                        .workspaces
-                        .iter()
-                        .position(|ws| ws.read(cx).unread_count > 0)
-                };
-                if let Some(i) = unread_workspace {
-                    root.app_state
-                        .update(cx, |state, cx| state.set_active_workspace(i, window, cx));
-                }
+                root.app_state
+                    .update(cx, |state, cx| state.jump_to_unread(window, cx));
             }))
             .on_action(cx.listener(|root, _: &ToggleFindBar, window, cx| {
                 if root.find_bar.is_some() {
-                    root.find_bar = None;
-                    root.focus_handle.focus(window);
+                    if let Some(bar) = root.find_bar.take() {
+                        bar.update(cx, |bar, cx| bar.clear(cx));
+                    }
+                    root.find_workspace = None;
+                    root.app_state
+                        .update(cx, |state, cx| state.focus_active_workspace(window, cx));
                 } else {
-                    let bar = cx.new(|cx| FindBar::new(window, cx));
-                    root.find_bar = Some(bar);
+                    let terminal = root
+                        .app_state
+                        .read(cx)
+                        .active_workspace()
+                        .read(cx)
+                        .target_terminal(cx);
+                    if let Some(terminal) = terminal {
+                        let bar = cx.new(|cx| FindBar::new(terminal, window, cx));
+                        root.find_bar = Some(bar);
+                        root.find_workspace =
+                            Some(root.app_state.read(cx).active_workspace().entity_id());
+                    }
                 }
                 cx.notify();
             }));

@@ -43,13 +43,20 @@ Notes:
 - Windows users should download the CLI asset directly from GitHub Releases for now
 - Intel macOS users should use the source install path for now
 - Git available on `PATH` for normal `rumux` usage
-- Rust 1.85 or newer is only required for source installs and local builds
+- Rust 1.88 or newer is required for source installs and local builds (including locked dependencies)
 - For the desktop app, the native graphics and windowing libraries required by GPUI on your platform
 
 Desktop app build and run:
 
 ```bash
 cargo run -p rumux-app
+```
+
+On macOS with Command Line Tools but no Metal compiler, GPUI can compile the
+same shaders at runtime:
+
+```bash
+cargo run -p rumux-app --features runtime-shaders
 ```
 
 On Linux, expect to need the usual development headers for Wayland and/or X11, `xkbcommon`, `fontconfig`, and `dbus` before building the desktop app.
@@ -123,6 +130,9 @@ rumux includes a pure-Rust desktop application built on GPUI.
 - Session save and restore for workspace layout
 - Command palette, notification panel, and find overlay
 - Ghostty-compatible terminal font configuration
+- Scrollback with mouse/trackpad scrolling, literal find with smart case and match navigation
+- OSC 7 directory tracking and OSC 0/2 terminal titles
+- Streaming OSC 9/99/777 notifications, unread pane borders and click-to-focus navigation
 - Local RPC endpoint for automation and integration
 - Single-instance desktop app with launch handoff to the running window
 
@@ -139,6 +149,7 @@ rumux rpc workspace.list
 rumux rpc surface.list
 rumux rpc surface.send_text '{"text":"cargo test","append_newline":true}'
 rumux rpc surface.send_key '{"keystroke":"ctrl-c"}'
+rumux notify --title "Ready for review" --body "Tests passed" --workspace 0 --surface 1
 ```
 
 Current automation model:
@@ -147,6 +158,8 @@ Current automation model:
 - `surface.*` methods operate on the current target terminal by default
 - `surface.*` methods can also target a specific terminal via `surface_index`
 - `system.activate` raises the primary desktop window, which is also what a second app launch uses for handoff
+- `notification.focus` accepts a notification `id`, focuses its workspace and terminal, and marks it read
+- Independent RPC clients can wait for output and send input concurrently; failed raw RPC calls exit with a nonzero CLI status
 - The RPC contract is intended for local-machine use and is versioned conservatively within a release line, but it is still evolving during `0.1.x`
 
 ### MCP Integration
@@ -180,6 +193,11 @@ The MCP bridge is intentionally thin:
 | Ctrl/Cmd+Q | Quit |
 
 ## Setup Hooks
+
+For testing separate desktop profiles, set `RUMUX_CONFIG_DIR` and
+`RUMUX_RUNTIME_DIR` together with a unique `RUMUX_SOCKET_PATH` (Unix) or
+`RUMUX_SOCKET_ADDR` (loopback TCP). Session saves are atomic with a valid-state
+backup. Damaged or unsupported future sessions are preserved and reported.
 
 rumux can automatically set up new worktrees (install dependencies, symlink config files, etc.) by running a hook script.
 

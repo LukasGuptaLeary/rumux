@@ -12,7 +12,7 @@ Thanks for working on `rumux`.
 
 Requirements:
 
-- Rust 1.85 or newer
+- Rust 1.88 or newer
 - Git on `PATH`
 - Native system libraries required by GPUI if you are building the desktop app
 
@@ -30,6 +30,29 @@ cargo check -p rumux-app
 
 # Run the desktop app
 cargo run -p rumux-app
+```
+
+The terminal component is part of the test workspace. For the complete local
+barrier on macOS with Command Line Tools:
+
+```bash
+cargo fmt --all --check
+cargo test --workspace --features rumux-app/runtime-shaders
+cargo build -p rumux-app -p rumux-cli --features rumux-app/runtime-shaders
+python3 scripts/smoke-desktop.py
+```
+
+The smoke test launches real PTYs and a desktop window in a disposable profile;
+it verifies automation, notifications, concurrency, and restart restore.
+It needs a graphics session. Linux can use `dbus-run-session -- xvfb-run -a`.
+
+A local Linux build uses the same system prerequisites as CI:
+
+```bash
+docker build -f scripts/linux.Dockerfile -t rumux-linux-check .
+docker run --rm -v "$PWD:/workspace:ro" -v rumux-linux-cargo:/usr/local/cargo \
+  -v rumux-linux-target:/build -e CARGO_TARGET_DIR=/build rumux-linux-check \
+  bash -c 'cargo test --workspace --locked && cargo build -p rumux-app -p rumux-cli --locked && dbus-run-session -- xvfb-run -a python3 scripts/smoke-desktop.py --app /build/debug/rumux-app --cli /build/debug/rumux'
 ```
 
 On Linux, desktop app builds usually need the standard development headers for Wayland and/or X11, `xkbcommon`, `fontconfig`, and `dbus`.

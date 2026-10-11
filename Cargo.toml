@@ -2,6 +2,7 @@
 members = [
     "crates/rumux-core",
     "crates/rumux-cli",
+    "crates/gpui-terminal",
     "app",
 ]
 default-members = [
@@ -11,7 +12,6 @@ default-members = [
 ]
 exclude = [
     "crates/gpui-component",
-    "crates/gpui-terminal",
 ]
 resolver = "3"
 
@@ -19,6 +19,6 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.88"
 repository = "https://github.com/LukasGuptaLeary/rumux"
 homepage = "https://github.com/LukasGuptaLeary/rumux"

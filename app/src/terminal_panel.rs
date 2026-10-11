@@ -5,8 +5,10 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_component::{IconName, Sizable};
 use gpui_terminal::TerminalView;
+use gpui_terminal::TerminalViewEvent;
+use rumux_core::terminal_protocol::{TerminalProtocolParser, TerminalSignal};
 
-use crate::terminal_surface::spawn_terminal_view;
+use crate::terminal_surface::{spawn_terminal_view, terminal_error_view};
 
 /// A terminal panel that implements the Panel trait for use in DockArea.
 ///
@@ -21,15 +23,59 @@ pub struct TerminalPanel {
     rename_editor: Option<Entity<InputState>>,
     rename_subscription: Option<Subscription>,
     focus_subscription: Option<Subscription>,
+    terminal_title: Option<String>,
+    pub exited: bool,
+    pub unread: bool,
+    protocol: TerminalProtocolParser,
+    _output_subscription: Subscription,
 }
+
+pub enum TerminalPanelEvent {
+    Signal(TerminalSignal),
+    Exited,
+}
+
+impl EventEmitter<TerminalPanelEvent> for TerminalPanel {}
 
 impl TerminalPanel {
     pub fn new(
         terminal: Entity<TerminalView>,
         index: usize,
         cwd: Option<String>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let subscription = cx.subscribe(
+            &terminal,
+            |panel: &mut Self, _, event: &TerminalViewEvent, cx| {
+                match event {
+                    TerminalViewEvent::Output(bytes) => {
+                        for signal in panel.protocol.feed(bytes) {
+                            match &signal {
+                                TerminalSignal::Title(title) => {
+                                    panel.terminal_title =
+                                        (!title.is_empty()).then(|| title.clone());
+                                }
+                                TerminalSignal::WorkingDirectory(path) => {
+                                    if panel.cwd.as_deref() == Some(path)
+                                        || !std::path::Path::new(path).is_dir()
+                                    {
+                                        continue;
+                                    }
+                                    panel.cwd = Some(path.clone());
+                                }
+                                _ => {}
+                            }
+                            cx.emit(TerminalPanelEvent::Signal(signal));
+                        }
+                    }
+                    TerminalViewEvent::Exited => {
+                        panel.exited = true;
+                        cx.emit(TerminalPanelEvent::Exited);
+                    }
+                }
+                cx.notify();
+            },
+        );
         Self {
             terminal,
             name: None,
@@ -39,6 +85,11 @@ impl TerminalPanel {
             rename_editor: None,
             rename_subscription: None,
             focus_subscription: None,
+            terminal_title: None,
+            exited: false,
+            unread: false,
+            protocol: TerminalProtocolParser::default(),
+            _output_subscription: subscription,
         }
     }
 
@@ -121,7 +172,12 @@ impl TerminalPanel {
     pub fn display_name(&self) -> String {
         self.name
             .clone()
+            .or_else(|| self.terminal_title.clone())
             .unwrap_or_else(|| format!("Terminal {}", self.index + 1))
+    }
+
+    pub fn terminal(&self) -> Entity<TerminalView> {
+        self.terminal.clone()
     }
 
     fn start_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -185,10 +241,9 @@ impl TerminalPanel {
         let index = next_terminal_index(&dock_area, cx);
         let cwd_path = cwd.map(std::path::Path::new);
         let panel = cx.new(|cx| {
-            TerminalPanel::from_cwd(cwd_path, index, cx).unwrap_or_else(|_| {
-                let term =
-                    spawn_terminal_view(&mut **cx, None, None).expect("failed to spawn terminal");
-                TerminalPanel::new(term, index, None, cx)
+            TerminalPanel::from_cwd(cwd_path, index, cx).unwrap_or_else(|error| {
+                let term = terminal_error_view(&mut **cx, &error);
+                TerminalPanel::new(term, index, cwd.map(str::to_string), cx)
             })
         });
         let panel_view = std::sync::Arc::new(panel);
@@ -444,6 +499,12 @@ impl Render for TerminalPanel {
 
         div()
             .size_full()
+            .border_2()
+            .border_color(if self.unread {
+                Hsla::from(rgb(crate::theme::ACCENT))
+            } else {
+                gpui::transparent_black()
+            })
             .context_menu(move |menu, _window, cx| {
                 let has_selection = terminal_for_menu.read(cx).has_selection();
                 let has_paste = cx
@@ -624,8 +685,7 @@ pub fn register(cx: &mut App) {
             let panel: Entity<TerminalPanel> = cx.new(|cx| {
                 let cwd_path = cwd.as_deref().map(std::path::Path::new);
                 let term = spawn_terminal_view(cx, cwd_path, None)
-                    .or_else(|_| spawn_terminal_view(cx, None, None))
-                    .expect("failed to spawn terminal");
+                    .unwrap_or_else(|error| terminal_error_view(cx, &error));
                 let mut p = TerminalPanel::new(term, index, cwd.clone(), cx);
                 p.set_name(name);
                 p

@@ -1,6 +1,8 @@
 use anyhow::Context;
 use async_net::TcpListener;
-use futures_lite::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use futures_lite::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+};
 use gpui::{AppContext, AsyncApp, Context as ViewContext, Keystroke, WeakEntity, Window};
 use gpui_component::Placement;
 use rumux_core::runtime::{IpcEndpoint, default_shell, ipc_endpoint};
@@ -134,6 +136,13 @@ struct NotificationCreateParams {
     workspace_index: Option<usize>,
     #[serde(default)]
     workspace_name: Option<String>,
+    #[serde(default)]
+    surface_index: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NotificationTargetParams {
+    id: String,
 }
 
 impl RpcResponse {
@@ -188,11 +197,17 @@ async fn start_unix_socket_server(
 
     let listener = UnixListener::bind(&path)
         .with_context(|| format!("Failed to bind Unix socket at {}", path.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
 
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                handle_stream(stream, app_state.clone(), cx).await;
+                let state = app_state.clone();
+                cx.spawn(async move |cx| {
+                    handle_stream(stream, state, cx).await;
+                })
+                .detach();
             }
             Err(error) => {
                 eprintln!("Socket accept error: {error}");
@@ -206,6 +221,10 @@ async fn start_tcp_socket_server(
     app_state: WeakEntity<AppState>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        addr.ip().is_loopback(),
+        "Rumux RPC must bind to a loopback address"
+    );
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind TCP socket at {addr}"))?;
@@ -213,7 +232,11 @@ async fn start_tcp_socket_server(
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                handle_stream(stream, app_state.clone(), cx).await;
+                let state = app_state.clone();
+                cx.spawn(async move |cx| {
+                    handle_stream(stream, state, cx).await;
+                })
+                .detach();
             }
             Err(error) => {
                 eprintln!("Socket accept error: {error}");
@@ -227,10 +250,18 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let (reader, mut writer) = smol::io::split(stream);
-    let mut buf_reader = BufReader::new(reader);
+    let mut buf_reader = BufReader::new(reader.take(1024 * 1024));
     let mut line = String::new();
 
-    if buf_reader.read_line(&mut line).await.is_ok() && !line.is_empty() {
+    let read = smol::future::or(async { buf_reader.read_line(&mut line).await }, async {
+        smol::Timer::after(std::time::Duration::from_secs(5)).await;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "RPC request timed out",
+        ))
+    })
+    .await;
+    if read.is_ok() && line.ends_with('\n') {
         let response = match serde_json::from_str::<RpcRequest>(&line) {
             Ok(req) => match req.method.as_str() {
                 "surface.wait_for_output" => {
@@ -1168,11 +1199,22 @@ fn handle_request(
                     params.workspace_name.as_deref(),
                     &**cx,
                 )?;
-                let notification = state.create_notification(
+                if let Some(surface_index) = params.surface_index {
+                    if !state.workspaces[workspace_index]
+                        .read(cx)
+                        .list_surfaces(cx)
+                        .iter()
+                        .any(|surface| surface.index == surface_index)
+                    {
+                        return Err(surface_not_found_message(Some(surface_index)));
+                    }
+                }
+                let notification = state.create_notification_at(
                     params.title.clone(),
                     params.subtitle.clone(),
                     params.body.clone(),
                     workspace_index,
+                    params.surface_index,
                     cx,
                 );
                 to_value(notification)
@@ -1181,6 +1223,19 @@ fn handle_request(
         "notification.list" => with_state(app_state, cx, |state, _cx| {
             to_value(state.notifications.clone())
         }),
+        "notification.focus" => {
+            let params = match parse_params::<NotificationTargetParams>(params) {
+                Ok(params) => params,
+                Err(error) => return RpcResponse::error(id, error),
+            };
+            with_window_state(app_state, cx, move |window, state, cx| {
+                if state.open_notification(&params.id, window, cx) {
+                    Ok(serde_json::json!({ "focused": true }))
+                } else {
+                    Err("Notification was not found".into())
+                }
+            })
+        }
         "notification.clear" => with_state(app_state, cx, |state, cx| {
             let cleared = state.notifications.len();
             state.clear_notifications(cx);
@@ -1232,6 +1287,7 @@ fn supported_methods() -> &'static [&'static str] {
         "surface.paste",
         "notification.create",
         "notification.list",
+        "notification.focus",
         "notification.clear",
     ]
 }
@@ -1367,6 +1423,7 @@ fn surface_placeholder(
     workspace: &crate::workspace::Workspace,
 ) -> crate::workspace::SurfaceSummary {
     crate::workspace::SurfaceSummary {
+        exited: false,
         index,
         title: format!("Terminal {}", index + 1),
         cwd: workspace.cwd.clone(),

@@ -14,7 +14,7 @@ pub fn run_ping(json: bool) -> Result<()> {
             .unwrap_or("unknown error");
         anyhow::bail!("{err}");
     }
-    Ok(())
+    ensure_success(&response)
 }
 
 pub fn run_capabilities(json: bool) -> Result<()> {
@@ -30,7 +30,7 @@ pub fn run_capabilities(json: bool) -> Result<()> {
             }
         }
     }
-    Ok(())
+    ensure_success(&response)
 }
 
 pub fn run_identify(json: bool) -> Result<()> {
@@ -45,20 +45,27 @@ pub fn run_identify(json: bool) -> Result<()> {
             .unwrap_or("?");
         println!("{app} {version}");
     }
-    Ok(())
+    ensure_success(&response)
 }
 
-pub fn run_notify(title: &str, body: &str, json: bool) -> Result<()> {
+pub fn run_notify(
+    title: &str,
+    body: &str,
+    workspace_index: Option<usize>,
+    surface_index: Option<usize>,
+    json: bool,
+) -> Result<()> {
     let response = send_rpc(
         "notification.create",
-        serde_json::json!({ "title": title, "body": body }),
+        serde_json::json!({ "title": title, "body": body, "workspace_index": workspace_index, "surface_index": surface_index }),
     )?;
     if json {
         println!("{}", serde_json::to_string_pretty(&response)?);
     } else {
+        ensure_success(&response)?;
         println!("Notification sent");
     }
-    Ok(())
+    ensure_success(&response)
 }
 
 pub fn run_raw(method: &str, params: &str, _json: bool) -> Result<()> {
@@ -69,5 +76,18 @@ pub fn run_raw(method: &str, params: &str, _json: bool) -> Result<()> {
     };
     let response = send_rpc(method, params)?;
     println!("{}", serde_json::to_string_pretty(&response)?);
-    Ok(())
+    ensure_success(&response)
+}
+
+fn ensure_success(response: &serde_json::Value) -> Result<()> {
+    if response.get("ok") == Some(&serde_json::Value::Bool(true)) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "{}",
+        response
+            .get("error")
+            .and_then(|value| value.as_str())
+            .unwrap_or("Invalid RPC response")
+    );
 }

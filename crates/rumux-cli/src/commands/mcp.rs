@@ -174,6 +174,7 @@ fn handle_tool_call(params: &Value) -> Result<Value> {
         "create_notification" => execute_rpc(name, "notification.create", Value::Object(arguments)),
         "list_notifications" => execute_rpc(name, "notification.list", Value::Object(arguments)),
         "clear_notifications" => execute_rpc(name, "notification.clear", Value::Object(arguments)),
+        "focus_notification" => execute_rpc(name, "notification.focus", Value::Object(arguments)),
         "rpc_raw" => {
             let method = arguments
                 .get("method")
@@ -480,11 +481,17 @@ fn tool_definitions() -> Vec<Value> {
                 ("subtitle", string_schema("Optional notification subtitle")),
                 ("body", string_schema("Notification body")),
                 ("workspace_index", integer_schema("Target workspace index")),
+                ("surface_index", integer_schema("Target terminal index")),
                 (
                     "workspace_name",
                     string_schema("Exact target workspace name"),
                 ),
             ]),
+        ),
+        tool(
+            "focus_notification",
+            "Focus a notification's originating workspace and terminal, and mark it read.",
+            json_schema_object([("id", string_schema("Notification ID"))]),
         ),
         tool(
             "rpc_raw",

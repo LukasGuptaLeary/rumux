@@ -80,6 +80,16 @@ fn main() {
 
         cx.spawn(async move |cx: &mut AsyncApp| {
             let app_state = cx.new(|cx| AppState::new(&mut *cx))?;
+            let state_for_quit = app_state.downgrade();
+            cx.update(|cx| {
+                cx.on_app_quit(move |cx| {
+                    if let Some(state) = state_for_quit.upgrade() {
+                        state.read(cx).save_session(cx);
+                    }
+                    async {}
+                })
+                .detach();
+            })?;
 
             let main_window = cx.open_window(
                 WindowOptions {

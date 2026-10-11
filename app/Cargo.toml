@@ -9,6 +9,11 @@ repository.workspace = true
 homepage.workspace = true
 publish = false
 
+[features]
+# GPUI supports compiling the same Metal shaders at runtime for source builds
+# made with Command Line Tools rather than the optional Xcode Metal toolchain.
+runtime-shaders = ["gpui/runtime_shaders"]
+
 [[bin]]
 name = "rumux-app"
 path = "src/main.rs"
@@ -36,6 +41,4 @@ smol = "2"
 async-net = "2"
 futures-lite = "2"
 fs2 = "0.4"
-
-[dev-dependencies]
 tempfile = "3"

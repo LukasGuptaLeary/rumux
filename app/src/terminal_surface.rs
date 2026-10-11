@@ -34,6 +34,15 @@ pub fn spawn_terminal_view_with_config(
 
     let shell = default_shell();
     let mut cmd = CommandBuilder::new(&shell);
+    #[cfg(target_os = "macos")]
+    if matches!(
+        std::path::Path::new(&shell)
+            .file_name()
+            .and_then(|s| s.to_str()),
+        Some("zsh" | "bash" | "sh" | "fish")
+    ) {
+        cmd.arg("-l");
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "rumux");
@@ -42,13 +51,20 @@ pub fn spawn_terminal_view_with_config(
         cmd.cwd(dir);
     }
 
-    let _child = pair.slave.spawn_command(cmd)?;
+    let mut child = pair.slave.spawn_command(cmd)?;
+    let mut killer = child.clone_killer();
+    // Reap the child off the UI thread; keep a separate handle for pane close.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 
     let writer = pair.master.take_writer()?;
     let reader = pair.master.try_clone_reader()?;
     let pty_master = Arc::new(parking_lot::Mutex::new(pair.master));
     drop(pair.slave);
 
+    let loaded_config = RumuxConfig::load();
+    let config_override = Some(config_override.unwrap_or(&loaded_config));
     let font_family = config_override
         .map(|c| c.font_family.clone())
         .unwrap_or_else(|| "JetBrains Mono".to_string());
@@ -77,8 +93,11 @@ pub fn spawn_terminal_view_with_config(
     };
 
     let terminal = cx.new(|cx| {
-        let mut view =
-            TerminalView::new(writer, reader, config, cx).with_resize_callback(resize_callback);
+        let mut view = TerminalView::new(writer, reader, config, cx)
+            .with_resize_callback(resize_callback)
+            .with_close_callback(move || {
+                let _ = killer.kill();
+            });
 
         if let Some(exit_cb) = on_exit {
             view = view.with_exit_callback(move |window, cx| exit_cb(window, cx));
@@ -92,4 +111,21 @@ pub fn spawn_terminal_view_with_config(
     });
 
     Ok(terminal)
+}
+
+pub fn terminal_error_view(cx: &mut App, error: &anyhow::Error) -> Entity<TerminalView> {
+    let message = format!(
+        "\x1b[31mUnable to start terminal: {error}\x1b[0m\r\nCheck your shell and working directory, then open a new terminal.\r\n"
+    );
+    cx.new(|cx| {
+        TerminalView::new(
+            std::io::sink(),
+            std::io::Cursor::new(message.into_bytes()),
+            TerminalConfig {
+                colors: theme::catppuccin_mocha(),
+                ..TerminalConfig::default()
+            },
+            cx,
+        )
+    })
 }
