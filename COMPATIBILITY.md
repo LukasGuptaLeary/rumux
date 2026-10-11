@@ -8,17 +8,18 @@ This document defines the current compatibility and support expectations for `ru
 |---------|---------------|---------------------|----------------|
 | CLI release binaries | Supported | Not yet published through releases | Supported via release zip |
 | CLI source build | Supported | Supported | Supported |
-| Desktop source build | Supported | Supported | Not yet validated |
+| Desktop source build | Validated | Validated | Build/tests passed; runtime qualification pending |
 | Desktop release artifacts | Supported (`tar.gz`) | Supported (`.app` zip) | Not yet published |
 
 Notes:
 
-- Linux desktop builds assume the usual X11 and/or Wayland runtime libraries for GPUI.
+- Linux desktop builds require the GPUI display libraries plus GTK 3 and WebKitGTK 4.1. Browser panes require an X11/XWayland parent; Rumux selects it when `DISPLAY` is available. `RUMUX_LINUX_BACKEND=wayland` retains the native Wayland terminal shell with an explicit browser-unavailable message.
 - macOS desktop release artifacts are currently unsigned and not notarized.
 - Windows desktop support is an active validation target, not a compatibility promise yet.
 - The completion branch adds native build/test/smoke gates for Linux, macOS and
   Windows. A configured gate is not evidence that it has passed; Windows remains
-  unvalidated until the native runner completes.
+  unqualified: the initial runner passed Rust tests/build but failed a live shell
+  status check. The proposed Enter-key correction requires a subsequent run.
 
 ## On-Disk State
 
@@ -57,7 +58,7 @@ Expectations:
 - Method removal or semantic changes should be called out in the changelog and release notes.
 - The `rumux mcp` bridge is a compatibility layer over this same local RPC contract, not a separate control plane.
 - Workspace and surface summary `id` fields are stable UUIDs, persisted in
-  schema 3. Older sessions receive IDs on load. Selectors accept `workspace_id`
+  schema 3 and later. Schema 4 adds browser panes and URLs. Older sessions receive IDs on load. Selectors accept `workspace_id`
   and `surface_id`; indices are retained for compatibility. Copies get fresh
   IDs. Long-running requests pin their initial target.
 - Direct TCP clients now require the profile's `auth_token` on every request.

@@ -71,15 +71,19 @@ Single binary built with clap (derive API). All git operations use `git2` (libgi
 ### Desktop App (`rumux-app`)
 Pure Rust, GPU-accelerated via GPUI framework (from Zed).
 
-- **Rendering**: GPUI + wgpu (Vulkan on Linux, Metal on macOS). No webview, no JavaScript.
+- **Rendering**: GPUI shell/terminal (Vulkan on Linux, Metal on macOS, DirectX on Windows). Browser panels use Wry with the system web engine.
 - **Terminal**: `gpui-terminal` crate wraps `alacritty_terminal` for VTE parsing + GPU cell rendering. `portable-pty` for PTY I/O.
 - **State model**: GPUI entities — AppState → Workspace → DockArea → TerminalPanel → TerminalView
 - **Layout**: Dock/tree model from `gpui-component`, mirroring the architectural style used by Zed
-- **Session restore**: Dock layout and terminal launch directories are serialized per workspace
+- **Session restore**: Dock layout, stable pane IDs, terminal launch directories and browser URLs are serialized per workspace
 - **Socket API**: local RPC over Unix sockets on Unix and loopback TCP on non-Unix
 - **Notifications**: OSC 777/99/9 escape sequences parsed from PTY output
 
 The legacy `v1` desktop path has been removed. Files under `app/src/` are the canonical shell.
+
+### Vendored GPUI
+
+`crates/gpui` pins published GPUI 0.2.2 with a narrow X11 native-handle patch and an explicit X11 constructor for XWayland browser hosting. Preserve its Apache-2.0 license and see `crates/gpui/RUMUX-PATCHES.md` before changing it. Browser tests use local fixtures via `python3 scripts/smoke-desktop.py --browser`.
 
 ### Vendored gpui-terminal
 The `crates/gpui-terminal/` directory is a vendored copy of https://github.com/zortax/gpui-terminal. Rumux patches include palette rendering, scrollback and selection, literal search, terminal protocol replies, bounded output delivery and pane lifecycle hooks. It is a workspace member so its tests run in the full local barrier. Keep changes focused and preserve the upstream license. The streaming OSC parser lives in `rumux-core::terminal_protocol`.

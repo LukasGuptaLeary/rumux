@@ -45,6 +45,12 @@ const COMMANDS: &[PaletteCommand] = &[
         action: || Box::new(NewTerminal),
     },
     PaletteCommand {
+        label: "New Browser",
+        shortcut: "Ctrl+Shift+O",
+        mac_shortcut: "Cmd+Shift+O",
+        action: || Box::new(NewBrowser),
+    },
+    PaletteCommand {
         label: "Close Terminal",
         shortcut: "Ctrl+Shift+X",
         mac_shortcut: "Cmd+W",

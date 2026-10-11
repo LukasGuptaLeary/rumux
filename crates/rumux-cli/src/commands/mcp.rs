@@ -176,6 +176,17 @@ fn handle_tool_call(params: &Value) -> Result<Value> {
         "list_notifications" => execute_rpc(name, "notification.list", Value::Object(arguments)),
         "clear_notifications" => execute_rpc(name, "notification.clear", Value::Object(arguments)),
         "focus_notification" => execute_rpc(name, "notification.focus", Value::Object(arguments)),
+        "create_browser" => execute_rpc(name, "browser.create", Value::Object(arguments)),
+        "navigate_browser" => execute_rpc(name, "browser.navigate", Value::Object(arguments)),
+        "get_browser_state" => execute_rpc(name, "browser.state", Value::Object(arguments)),
+        "browser_back" => execute_rpc(name, "browser.back", Value::Object(arguments)),
+        "browser_forward" => execute_rpc(name, "browser.forward", Value::Object(arguments)),
+        "reload_browser" => execute_rpc(name, "browser.reload", Value::Object(arguments)),
+        "stop_browser" => execute_rpc(name, "browser.stop", Value::Object(arguments)),
+        "evaluate_browser" => execute_rpc(name, "browser.eval", Value::Object(arguments)),
+        "snapshot_browser" => execute_rpc(name, "browser.snapshot", Value::Object(arguments)),
+        "click_browser" => execute_rpc(name, "browser.click", Value::Object(arguments)),
+        "fill_browser" => execute_rpc(name, "browser.fill", Value::Object(arguments)),
         "rpc_raw" => {
             let method = arguments
                 .get("method")
@@ -328,7 +339,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "list_surfaces",
-            "List terminal surfaces for a workspace.",
+            "List terminal and browser surfaces for a workspace.",
             json_schema_object([
                 ("workspace_index", integer_schema("Workspace index")),
                 ("workspace_name", string_schema("Exact workspace name")),
@@ -336,7 +347,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "focus_surface",
-            "Focus a terminal surface by workspace and optional surface index.",
+            "Focus a surface by workspace and optional surface index.",
             json_schema_object([
                 ("workspace_index", integer_schema("Workspace index")),
                 ("workspace_name", string_schema("Exact workspace name")),
@@ -371,7 +382,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "close_surface",
-            "Close a terminal surface by workspace and optional surface index.",
+            "Close a surface by workspace and optional surface index.",
             json_schema_object([
                 ("workspace_index", integer_schema("Workspace index")),
                 ("workspace_name", string_schema("Exact workspace name")),
@@ -380,7 +391,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "rename_surface",
-            "Rename a terminal tab by workspace and optional surface index. Pass an empty string to clear the custom title.",
+            "Rename a tab by workspace and optional surface index. Pass an empty string to clear the custom title.",
             json_schema_object([
                 ("workspace_index", integer_schema("Workspace index")),
                 ("workspace_name", string_schema("Exact workspace name")),
@@ -506,6 +517,141 @@ fn tool_definitions() -> Vec<Value> {
             "focus_notification",
             "Focus a notification's originating workspace and terminal, and mark it read.",
             json_schema_object([("id", string_schema("Notification ID"))]),
+        ),
+        tool(
+            "create_browser",
+            "Open an embedded browser tab or split for a local preview or website.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("url", string_schema("HTTP(S) URL; default about:blank")),
+                (
+                    "placement",
+                    json!({"type":"string","enum":["right","down"]}),
+                ),
+            ]),
+        ),
+        tool(
+            "navigate_browser",
+            "Navigate an existing browser to an HTTP(S) URL.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("url", string_schema("HTTP(S) URL")),
+            ]),
+        ),
+        tool(
+            "get_browser_state",
+            "Read browser URL, title, loading state and errors.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "browser_back",
+            "Navigate back in this browser history.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "browser_forward",
+            "Navigate forward in this browser history.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "reload_browser",
+            "Reload the current browser page.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "stop_browser",
+            "Stop loading this browser page.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "evaluate_browser",
+            "Evaluate a synchronous JavaScript expression in the browser page.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("expression", string_schema("JavaScript expression")),
+                (
+                    "timeout_ms",
+                    integer_schema("Evaluation timeout in milliseconds"),
+                ),
+            ]),
+        ),
+        tool(
+            "snapshot_browser",
+            "Read bounded page text and interactive elements; password values are omitted.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "click_browser",
+            "Click a browser element matching a CSS selector.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("selector", string_schema("CSS selector")),
+            ]),
+        ),
+        tool(
+            "fill_browser",
+            "Fill a form field and dispatch input/change events.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("selector", string_schema("CSS selector")),
+                ("text", string_schema("Field value")),
+            ]),
         ),
         tool(
             "rpc_raw",

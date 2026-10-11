@@ -7,6 +7,7 @@ No user session, config, repository files, or clipboard contents are modified.
 import argparse
 import concurrent.futures
 import json
+import http.server
 import os
 from pathlib import Path
 import shlex
@@ -14,6 +15,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 
@@ -36,6 +38,7 @@ def main():
     parser.add_argument("--app", default="target/debug/rumux-app")
     parser.add_argument("--cli", default="target/debug/rumux")
     parser.add_argument("--tcp", action="store_true", help="Exercise authenticated loopback TCP on Unix too")
+    parser.add_argument("--browser", action="store_true", help="Exercise the embedded browser against local fixture pages")
     args = parser.parse_args()
     app, cli = Path(args.app).resolve(), Path(args.cli).resolve()
     assert app.is_file() and cli.is_file(), "Build rumux-app and rumux-cli first"
@@ -101,6 +104,14 @@ def main():
             process = None
 
         def python_command(code):
+            if windows:
+                code = ("import ctypes; k=ctypes.windll.kernel32; "
+                        "k.GetStdHandle.restype=ctypes.c_void_p; "
+                        "k.GetConsoleMode.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_ulong)]; "
+                        "k.SetConsoleMode.argtypes=[ctypes.c_void_p,ctypes.c_ulong]; "
+                        "h=k.GetStdHandle(-11); mode=ctypes.c_ulong(); "
+                        "assert k.GetConsoleMode(h,ctypes.byref(mode)); "
+                        "assert k.SetConsoleMode(h,mode.value|4); " + code)
             argv = [sys.executable, "-c", code]
             return subprocess.list2cmdline(argv) if windows else shlex.join(argv)
 
@@ -226,7 +237,111 @@ def main():
             assert rpc("workspace.current")["id"] != workspace_id, duplicate
             assert original_ids.isdisjoint({s["id"] for s in rpc("surface.list")["surfaces"]})
             checks.append("duplicated workspaces receive independent identities")
+            if args.browser:
+                class Fixture(http.server.BaseHTTPRequestHandler):
+                    def log_message(self, *args):
+                        pass
+                    def do_GET(self):
+                        second = self.path == "/second"
+                        content = ("<title>Rumux second page</title><h1>Second page</h1>" if second else
+                                   "<title>Rumux browser smoke</title><h1>Browser fixture marker</h1>"
+                                   "<input id='secret' type='password' value='private-password'><input id='value'><button id='apply' onclick=\"document.querySelector('#result').textContent=document.querySelector('#value').value\">Apply</button>"
+                                   "<p id='result'></p><a href='/second'>Second page</a>")
+                        body = ("<!doctype html><html><body>" + content + "</body></html>").encode()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html; charset=utf-8")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture) as fixture:
+                    thread = threading.Thread(target=fixture.serve_forever, daemon=True)
+                    thread.start()
+                    url = f"http://127.0.0.1:{fixture.server_port}/"
+                    try:
+                        browser = rpc("browser.create", {"url": url, "placement": "right"})["created"]
+                        browser_target = {"surface_id": browser["id"]}
+                        assert browser["kind"] == "browser"
+                        eventually(lambda: rpc("browser.snapshot", browser_target)["value"]["title"] == "Rumux browser smoke")
+                        assert rpc("browser.eval", dict(browser_target, expression="1 + 2"))["value"] == 3
+                        snapshot = rpc("browser.snapshot", browser_target)["value"]
+                        assert "Browser fixture marker" in snapshot["text"] and any(e["id"] == "apply" for e in snapshot["elements"])
+                        filled = "Quoted \"text\" with $() and Unicode café"
+                        rpc("browser.fill", dict(browser_target, selector="#value", text=filled))
+                        rpc("browser.click", dict(browser_target, selector="#apply"))
+                        assert rpc("browser.eval", dict(browser_target, expression="document.querySelector('#result').textContent"))["value"] == filled
+                        secret = next(e for e in snapshot["elements"] if e["id"] == "secret")
+                        assert "value" not in secret
+                        for method, parameters in [
+                            ("browser.navigate", dict(browser_target, url="file:///etc/passwd")),
+                            ("browser.eval", dict(browser_target, expression="throw new Error('expected failure')")),
+                            ("browser.eval", dict(browser_target, expression="Promise.resolve(3)")),
+                            ("browser.click", dict(browser_target, selector="#missing")),
+                        ]:
+                            try:
+                                rpc(method, parameters)
+                            except ValueError:
+                                pass
+                            else:
+                                raise AssertionError(f"{method} should reject {parameters}")
+                        assert rpc("system.ping")["pong"]
+                        checks.append("native browser DOM, evaluation, fill and click")
+                        checks.append("browser error isolation and password snapshot privacy")
+
+                        browser_requests = [
+                            {"jsonrpc":"2.0","id":1,"method":"tools/list"},
+                            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"snapshot_browser","arguments":browser_target}},
+                        ]
+                        browser_mcp = subprocess.run([str(cli), "mcp"], input="".join(json.dumps(r) + "\n" for r in browser_requests), env=env, capture_output=True, text=True, timeout=10)
+                        replies = [json.loads(line) for line in browser_mcp.stdout.splitlines()]
+                        assert browser_mcp.returncode == 0 and len(replies) == 2, browser_mcp.stdout
+                        tools = {tool["name"]:tool for tool in replies[0]["result"]["tools"]}
+                        assert "surface_id" in tools["snapshot_browser"]["inputSchema"]["properties"]
+                        assert replies[1]["result"]["structuredContent"]["value"]["title"] == "Rumux browser smoke"
+                        checks.append("MCP native browser control")
+
+                        rpc("surface.rename", dict(browser_target, name="Preview tab"))
+                        terminal = rpc("surface.split", dict(browser_target, placement="down"))["created"]
+                        assert terminal["kind"] == "terminal" and terminal["id"] != browser["id"]
+                        rpc("surface.close", {"surface_id":terminal["id"]})
+                        tab = rpc("surface.create", browser_target)["created"]
+                        eventually(lambda: not rpc("browser.state", browser_target)["visible"])
+                        rpc("surface.prev", {"surface_id":tab["id"]})
+                        eventually(lambda: rpc("browser.state", browser_target)["visible"])
+                        rpc("surface.next", browser_target)
+                        eventually(lambda: not rpc("browser.state", browser_target)["visible"])
+                        rpc("surface.close", {"surface_id":tab["id"]})
+                        rpc("surface.focus", browser_target)
+                        rpc("surface.zoom", browser_target)
+                        assert rpc("browser.state", browser_target)["visible"]
+                        rpc("surface.zoom", browser_target)
+                        other = rpc("workspace.create", {"name":"browser visibility"})
+                        eventually(lambda: not rpc("browser.state", browser_target)["visible"])
+                        rpc("workspace.close", {"index":other["index"]})
+                        eventually(lambda: rpc("browser.state", browser_target)["visible"])
+                        checks.append("mixed browser/terminal splits, tabs, zoom and workspace visibility")
+                        rpc("browser.navigate", dict(browser_target, url=url + "second"))
+                        eventually(lambda: rpc("browser.snapshot", browser_target)["value"]["title"] == "Rumux second page")
+                        rpc("browser.back", browser_target)
+                        eventually(lambda: rpc("browser.snapshot", browser_target)["value"]["title"] == "Rumux browser smoke")
+                        rpc("browser.reload", browser_target)
+                        eventually(lambda: rpc("browser.snapshot", browser_target)["value"]["title"] == "Rumux browser smoke")
+                        checks.append("browser navigation, history and reload")
+                        stop()
+                        launch()
+                        restored = next(s for s in rpc("surface.list")["surfaces"] if s["id"] == browser["id"])
+                        assert restored["kind"] == "browser" and restored["url"] == url
+                        eventually(lambda: rpc("browser.snapshot", browser_target)["value"]["title"] == "Rumux browser smoke")
+                        rpc("surface.close", browser_target)
+                        assert all(s["id"] != browser["id"] for s in rpc("surface.list")["surfaces"])
+                        checks.append("browser identity, URL restart restore and close")
+                    finally:
+                        fixture.shutdown()
+                        thread.join(timeout=5)
         except BaseException:
+            try:
+                print(json.dumps({"surfaces":rpc("surface.list"),"last_terminal":rpc("surface.read",{"scope":"buffer","max_chars":4000})}, indent=2), file=sys.stderr)
+            except (OSError,ValueError):
+                pass
             stop()
             log.flush()
             print(log_path.read_text(encoding="utf-8"), file=sys.stderr)

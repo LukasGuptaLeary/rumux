@@ -12,6 +12,7 @@ default-members = [
 ]
 exclude = [
     "crates/gpui-component",
+    "crates/gpui",
 ]
 resolver = "3"
 
@@ -22,3 +23,8 @@ license = "MIT"
 rust-version = "1.88"
 repository = "https://github.com/LukasGuptaLeary/rumux"
 homepage = "https://github.com/LukasGuptaLeary/rumux"
+
+[patch.crates-io]
+# GPUI 0.2.2 X11 raw-window/display handles panic; the local patch implements
+# those handles for native browser child views without changing the renderer.
+gpui = { path = "crates/gpui" }

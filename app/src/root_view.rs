@@ -18,6 +18,7 @@ actions!(
         SplitRight,
         SplitDown,
         NewTerminal,
+        NewBrowser,
         CloseTerminal,
         NextWorkspace,
         PrevWorkspace,
@@ -84,6 +85,16 @@ impl RootView {
 impl Render for RootView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_ws = self.app_state.read(cx).active_workspace().clone();
+        let workspaces = self.app_state.read(cx).workspaces.clone();
+        let browser_visible = self.command_palette.is_none()
+            && self.notification_panel.is_none()
+            && self.find_bar.is_none();
+        for workspace in workspaces {
+            let visible = browser_visible && workspace.entity_id() == active_ws.entity_id();
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_browsers_visible(visible, cx)
+            });
+        }
 
         let mut container = div()
             .size_full()
@@ -119,6 +130,17 @@ impl Render for RootView {
                 let ws = root.app_state.read(cx).active_workspace().clone();
                 ws.update(cx, |ws, cx| {
                     ws.add_terminal(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|root, _: &NewBrowser, window, cx| {
+                let workspace = root.app_state.read(cx).active_workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.add_browser(
+                        "about:blank".into(),
+                        Some(gpui_component::Placement::Right),
+                        window,
+                        cx,
+                    );
                 });
             }))
             .on_action(cx.listener(|root, _: &CloseTerminal, window, cx| {

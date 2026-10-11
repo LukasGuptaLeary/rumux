@@ -1,6 +1,8 @@
 #![warn(clippy::all)]
 
 mod app_state;
+mod browser;
+mod browser_panel;
 mod command_palette;
 mod config;
 mod custom_commands;
@@ -23,6 +25,12 @@ use app_state::AppState;
 use root_view::*;
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    // This runs before any application threads are created. Native child
+    // WebView2 windows need GPUI's HWND composition path.
+    unsafe {
+        std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "true");
+    }
     const APP_ID: &str = "io.github.lukasguptaleary.rumux";
 
     let _instance_guard = match instance::acquire_or_activate_existing() {
@@ -34,7 +42,25 @@ fn main() {
         }
     };
 
-    let app = Application::new().with_assets(gpui_component_assets::Assets);
+    // GTK child browsers can share an X11/XWayland parent; keep the original
+    // session environment intact for terminals and programs launched inside.
+    #[cfg(target_os = "linux")]
+    let application = if std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty())
+        && std::env::var("RUMUX_LINUX_BACKEND").as_deref() != Ok("wayland")
+    {
+        match Application::x11() {
+            Ok(app) => app,
+            Err(error) => {
+                eprintln!("Failed to open X11/XWayland display: {error:#}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        Application::new()
+    };
+    #[cfg(not(target_os = "linux"))]
+    let application = Application::new();
+    let app = application.with_assets(gpui_component_assets::Assets);
 
     app.run(move |cx| {
         gpui_component::init(cx);
@@ -42,6 +68,8 @@ fn main() {
 
         // Register panel types for DockArea serialization
         terminal_panel::register(cx);
+        browser::init(cx);
+        browser_panel::register(cx);
 
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-n", NewWorkspace, None),
@@ -54,6 +82,8 @@ fn main() {
             KeyBinding::new("cmd-shift-d", SplitDown, None),
             KeyBinding::new("ctrl-shift-t", NewTerminal, None),
             KeyBinding::new("cmd-t", NewTerminal, None),
+            KeyBinding::new("ctrl-shift-o", NewBrowser, None),
+            KeyBinding::new("cmd-shift-o", NewBrowser, None),
             KeyBinding::new("ctrl-shift-x", CloseTerminal, None),
             KeyBinding::new("cmd-w", CloseTerminal, None),
             KeyBinding::new("ctrl-tab", NextWorkspace, None),

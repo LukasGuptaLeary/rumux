@@ -81,6 +81,33 @@ struct SurfaceStatusParams {
     message: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct BrowserCreateParams {
+    #[serde(flatten)]
+    target: SurfaceTargetParams,
+    url: Option<String>,
+    placement: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowserNavigateParams {
+    #[serde(flatten)]
+    target: SurfaceTargetParams,
+    url: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct BrowserEvaluateParams {
+    #[serde(flatten)]
+    target: SurfaceTargetParams,
+    expression: String,
+    selector: Option<String>,
+    text: Option<String>,
+    timeout_ms: Option<u64>,
+}
+
 #[derive(Debug, Deserialize)]
 struct SurfaceSplitParams {
     #[serde(flatten)]
@@ -327,6 +354,9 @@ async fn handle_stream<S>(
             } {
                 Err(error) => RpcResponse::error(req.id, error),
                 Ok(()) => match req.method.as_str() {
+                    "browser.eval" | "browser.snapshot" | "browser.click" | "browser.fill" => {
+                        handle_browser_evaluation(req, &app_state, cx).await
+                    }
                     "surface.wait_for_output" => {
                         handle_surface_wait_for_output(req, &app_state, cx).await
                     }
@@ -353,9 +383,10 @@ fn normalize_targets(
     cx: &mut AsyncApp,
 ) -> Result<(), String> {
     let surface_method = request.method.starts_with("surface.");
+    let browser_method = request.method.starts_with("browser.");
     let workspace_method = request.method.starts_with("workspace.");
     let notification_method = request.method == "notification.create";
-    if !(surface_method || workspace_method || notification_method) {
+    if !(surface_method || browser_method || workspace_method || notification_method) {
         return Ok(());
     }
     if !request.params.is_object() {
@@ -399,7 +430,11 @@ fn normalize_targets(
         target.workspace_id = Some(workspace.id.to_string());
         request.params["workspace_index"] = serde_json::json!(workspace_index);
         request.params["workspace_id"] = serde_json::json!(target.workspace_id);
-        if surface_method || target.surface_id.is_some() || target.surface_index.is_some() {
+        if surface_method
+            || (browser_method && request.method != "browser.create")
+            || target.surface_id.is_some()
+            || target.surface_index.is_some()
+        {
             let surface = workspace
                 .list_surfaces(cx)
                 .into_iter()
@@ -485,6 +520,76 @@ fn handle_request(
     } = req;
 
     let result = match method.as_str() {
+        "browser.create" => {
+            let params = match parse_params::<BrowserCreateParams>(params) {
+                Ok(params) => params,
+                Err(error) => return RpcResponse::error(id, error),
+            };
+            let url =
+                match crate::browser::normalize_url(params.url.as_deref().unwrap_or("about:blank"))
+                {
+                    Ok(url) => url,
+                    Err(error) => return RpcResponse::error(id, error.to_string()),
+                };
+            let placement = match params
+                .placement
+                .as_deref()
+                .map(parse_surface_split_placement)
+                .transpose()
+            {
+                Ok(placement) => placement,
+                Err(error) => return RpcResponse::error(id, error),
+            };
+            with_window_state(app_state, cx, |window, state, cx| {
+                let (workspace_index, surface_index) =
+                    resolve_surface_params(state, &params.target, cx)?;
+                state.set_active_workspace(workspace_index, window, cx);
+                let workspace = state.workspaces[workspace_index].clone();
+                let index = workspace.update(cx, |workspace, cx| {
+                    if surface_index.is_some() {
+                        workspace.focus_surface(surface_index, window, cx);
+                    }
+                    workspace.add_browser(url, placement, window, cx)
+                });
+                surface_operation_response(
+                    "created",
+                    workspace_index,
+                    workspace.read(cx),
+                    Some(index),
+                    cx,
+                )
+            })
+        }
+        "browser.navigate" => {
+            let params = match parse_params::<BrowserNavigateParams>(params) {
+                Ok(params) => params,
+                Err(error) => return RpcResponse::error(id, error),
+            };
+            with_window_state(app_state, cx, |window, state, cx| {
+                let browser = browser_for_target(state, &params.target, cx)?;
+                browser
+                    .update(cx, |browser, cx| browser.navigate(&params.url, window, cx))
+                    .map_err(|error| error.to_string())?;
+                Ok(browser.read(cx).summary())
+            })
+        }
+        "browser.state" | "browser.back" | "browser.forward" | "browser.reload"
+        | "browser.stop" => {
+            let target = match parse_params::<SurfaceTargetParams>(params) {
+                Ok(params) => params,
+                Err(error) => return RpcResponse::error(id, error),
+            };
+            with_state(app_state, cx, |state, cx| {
+                let browser = browser_for_target(state, &target, cx)?;
+                if method != "browser.state" {
+                    browser
+                        .read(cx)
+                        .action(method.strip_prefix("browser.").unwrap_or_default())
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(browser.read(cx).summary())
+            })
+        }
         "surface.set_status" => {
             let params = match parse_params::<SurfaceStatusParams>(params) {
                 Ok(params) => params,
@@ -522,6 +627,7 @@ fn handle_request(
         "system.ping" => Ok(serde_json::json!({ "pong": true })),
         "system.capabilities" => Ok(serde_json::json!({
             "stable_ids": true,
+            "browser": {"engine": "system-webview", "linux_display": "X11 or XWayland", "evaluation": "synchronous JavaScript"},
             "methods": supported_methods(),
             "access_mode": "rumuxOnly",
             "transport": format!("{:?}", ipc_endpoint()),
@@ -979,7 +1085,8 @@ fn handle_request(
                 let workspace = state.workspaces[workspace_index].clone();
                 let mut text = params.text.clone();
                 if params.append_newline {
-                    text.push('\n');
+                    // Match the Enter key; LF does not submit a cmd.exe input line.
+                    text.push('\r');
                 }
 
                 let sent = workspace.update(cx, |workspace, cx| {
@@ -1518,6 +1625,17 @@ fn supported_methods() -> &'static [&'static str] {
         "surface.copy_selection",
         "surface.copy_all",
         "surface.paste",
+        "browser.create",
+        "browser.navigate",
+        "browser.state",
+        "browser.back",
+        "browser.forward",
+        "browser.reload",
+        "browser.stop",
+        "browser.eval",
+        "browser.snapshot",
+        "browser.click",
+        "browser.fill",
         "notification.create",
         "notification.list",
         "notification.focus",
@@ -1656,6 +1774,8 @@ fn surface_placeholder(
     workspace: &crate::workspace::Workspace,
 ) -> crate::workspace::SurfaceSummary {
     crate::workspace::SurfaceSummary {
+        kind: "terminal",
+        url: None,
         id: String::new(),
         status: rumux_core::status::SurfaceStatus::Idle,
         status_message: None,
@@ -2093,5 +2213,86 @@ mod tests {
                 0o600
             );
         }
+    }
+}
+
+fn browser_for_target(
+    state: &AppState,
+    target: &SurfaceTargetParams,
+    cx: &gpui::App,
+) -> Result<gpui::Entity<crate::browser::BrowserView>, String> {
+    let (workspace_index, surface_index) = resolve_surface_params(state, target, cx)?;
+    state.workspaces[workspace_index]
+        .read(cx)
+        .browser_for_surface(surface_index, cx)
+        .ok_or_else(|| "The target surface is not a browser".into())
+}
+
+async fn handle_browser_evaluation(
+    req: RpcRequest,
+    state: &WeakEntity<AppState>,
+    cx: &mut AsyncApp,
+) -> RpcResponse {
+    let RpcRequest {
+        id, method, params, ..
+    } = req;
+    let params: BrowserEvaluateParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(error) => return RpcResponse::error(id, error),
+    };
+    let expression = match method.as_str() {
+        "browser.snapshot" => "JSON.stringify({url:location.href,title:document.title,text:(document.body?.innerText || '').slice(0,100000),elements:Array.from(document.querySelectorAll('a,button,input,textarea,select,[role]')).slice(0,1000).map(e=>({tag:e.tagName.toLowerCase(),id:e.id,role:e.getAttribute('role'),text:(e.innerText || e.getAttribute('aria-label') || '').slice(0,200),value:e.type === 'password' ? undefined : e.value,href:e.href}))})".to_string(),
+        "browser.click" | "browser.fill" => {
+            let Some(selector) = &params.selector else { return RpcResponse::error(id, "A CSS selector is required".into()); };
+            let selector = match serde_json::to_string(selector) { Ok(selector) => selector, Err(error) => return RpcResponse::error(id, error.to_string()) };
+            if method == "browser.click" {
+                format!("(() => {{ const e = document.querySelector({selector}); if (!e) throw new Error('Element was not found'); e.click(); return true; }})()")
+            } else {
+                let text = match serde_json::to_string(&params.text.unwrap_or_default()) { Ok(text) => text, Err(error) => return RpcResponse::error(id, error.to_string()) };
+                format!("(() => {{ const e = document.querySelector({selector}); if (!e) throw new Error('Element was not found'); const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(e),'value')?.set; if (setter) setter.call(e,{text}); else e.value={text}; e.dispatchEvent(new Event('input',{{bubbles:true}})); e.dispatchEvent(new Event('change',{{bubbles:true}})); return true; }})()")
+            }
+        }
+        _ => params.expression,
+    };
+    let receiver = match with_state(state, cx, |state, cx| {
+        browser_for_target(state, &params.target, cx)?
+            .read(cx)
+            .evaluate(&expression)
+            .map_err(|error| error.to_string())
+    }) {
+        Ok(receiver) => receiver,
+        Err(error) => return RpcResponse::error(id, error),
+    };
+    let timeout =
+        std::time::Duration::from_millis(params.timeout_ms.unwrap_or(10_000).clamp(100, 120_000));
+    let result = smol::future::or(
+        async {
+            receiver
+                .recv_async()
+                .await
+                .map_err(|_| "Browser was closed".to_string())
+        },
+        async {
+            smol::Timer::after(timeout).await;
+            Err("Browser evaluation timed out".to_string())
+        },
+    )
+    .await;
+    let result = result.and_then(|value| {
+        crate::browser::decode_evaluation(&value).map_err(|error| error.to_string())
+    });
+    match result {
+        Ok(value) => {
+            let value = if method == "browser.snapshot" {
+                value
+                    .as_str()
+                    .and_then(|text| serde_json::from_str(text).ok())
+                    .unwrap_or(value)
+            } else {
+                value
+            };
+            RpcResponse::success(id, serde_json::json!({"value": value}))
+        }
+        Err(error) => RpcResponse::error(id, error),
     }
 }

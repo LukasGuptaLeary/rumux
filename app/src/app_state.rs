@@ -420,7 +420,7 @@ impl AppState {
 }
 
 fn clear_panel_ids(panel: &mut gpui_component::dock::PanelState) {
-    if panel.panel_name == "TerminalPanel" {
+    if matches!(panel.panel_name.as_str(), "TerminalPanel" | "BrowserPanel") {
         if let gpui_component::dock::PanelInfo::Panel(value) = &mut panel.info {
             if let Some(info) = value.as_object_mut() {
                 info.remove("id");

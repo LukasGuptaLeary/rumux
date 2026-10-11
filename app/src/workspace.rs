@@ -9,6 +9,7 @@ use gpui_component::dock::{
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::browser_panel::BrowserPanel;
 use crate::session::WorkspaceSession;
 use crate::terminal_panel::{TerminalPanel, TerminalPanelEvent};
 use crate::terminal_surface::terminal_error_view;
@@ -26,6 +27,9 @@ pub enum WorkspaceEvent {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SurfaceSummary {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     pub id: String,
     pub index: usize,
     pub title: String,
@@ -400,11 +404,14 @@ impl Workspace {
     }
 
     pub fn list_surfaces(&self, cx: &App) -> Vec<SurfaceSummary> {
-        self.surface_targets(cx)
+        let mut surfaces: Vec<_> = self
+            .surface_targets(cx)
             .into_iter()
             .map(|target| {
                 let panel = target.panel.read(cx);
                 SurfaceSummary {
+                    kind: "terminal",
+                    url: None,
                     id: panel.id.to_string(),
                     index: panel.index(),
                     title: panel.display_name(),
@@ -416,7 +423,103 @@ impl Workspace {
                     status_message: panel.status_message.clone(),
                 }
             })
-            .collect()
+            .collect();
+        let target_id = self
+            .target_tab_panel(None, cx)
+            .and_then(|tab| tab.read(cx).active_panel(cx))
+            .map(|panel| panel.view().entity_id());
+        for (tab, position, panel) in self.browser_targets(cx) {
+            let browser = panel.read(cx);
+            surfaces.push(SurfaceSummary {
+                id: browser.id.to_string(),
+                index: browser.index,
+                title: browser.title_text(cx),
+                kind: "browser",
+                url: Some(browser.browser.read(cx).url.clone()),
+                cwd: None,
+                active_tab: tab.read(cx).active_index() == position,
+                target: Some(panel.entity_id()) == target_id,
+                exited: false,
+                status: rumux_core::status::SurfaceStatus::Idle,
+                status_message: None,
+            });
+        }
+        surfaces
+    }
+
+    fn browser_targets(&self, cx: &App) -> Vec<(Entity<TabPanel>, usize, Entity<BrowserPanel>)> {
+        let mut result = Vec::new();
+        for tab in self.dock_area.read(cx).items().all_tab_panels(cx) {
+            for (position, panel) in tab.read(cx).panels().iter().enumerate() {
+                if panel.panel_name(cx) == "BrowserPanel" {
+                    result.push((
+                        tab.clone(),
+                        position,
+                        Entity::<BrowserPanel>::from(panel.as_ref()),
+                    ));
+                }
+            }
+        }
+        result
+    }
+
+    pub fn browser_for_surface(
+        &self,
+        index: Option<usize>,
+        cx: &App,
+    ) -> Option<Entity<crate::browser::BrowserView>> {
+        let target = self
+            .target_tab_panel(None, cx)
+            .and_then(|tab| tab.read(cx).active_panel(cx))
+            .map(|panel| panel.view().entity_id());
+        self.browser_targets(cx)
+            .into_iter()
+            .find(|(_, _, panel)| {
+                index.map_or(Some(panel.entity_id()) == target, |index| {
+                    panel.read(cx).index == index
+                })
+            })
+            .map(|(_, _, panel)| panel.read(cx).browser.clone())
+    }
+
+    pub fn set_browsers_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        let zoomed = self.dock_area.read(cx).zoomed_view_id();
+        for (tab, _, panel) in self.browser_targets(cx) {
+            let allowed =
+                visible && zoomed.is_none_or(|id| id == tab.entity_id() || id == panel.entity_id());
+            panel.update(cx, |panel, cx| panel.set_allowed(allowed, cx));
+        }
+    }
+
+    pub fn add_browser(
+        &mut self,
+        url: String,
+        placement: Option<Placement>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let index = self.current_next_terminal_index(cx);
+        let panel = cx.new(|cx| BrowserPanel::new(index, Uuid::new_v4(), url, window, cx));
+        let panel_view: Arc<dyn PanelView> = Arc::new(panel);
+        if let Some(tab) = self.target_tab_panel(Some(window), cx) {
+            if let Some(placement) = placement {
+                if self
+                    .insert_split_panel(&tab, panel_view.clone(), placement, window, cx)
+                    .is_none()
+                {
+                    tab.update(cx, |tab, cx| tab.add_panel(panel_view, window, cx));
+                }
+            } else {
+                tab.update(cx, |tab, cx| tab.add_panel(panel_view, window, cx));
+            }
+        } else {
+            self.dock_area.update(cx, |area, cx| {
+                area.add_panel(panel_view, DockPlacement::Center, None, window, cx)
+            });
+        }
+        cx.emit(WorkspaceEvent::PersistRequested);
+        cx.notify();
+        index
     }
 
     pub fn set_surface_status(
@@ -468,6 +571,15 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if let Some((tab, position, panel)) = self
+            .browser_targets(cx)
+            .into_iter()
+            .find(|(_, _, panel)| surface_index == Some(panel.read(cx).index))
+        {
+            tab.update(cx, |tab, cx| tab.set_active_index(position, window, cx));
+            panel.read(cx).focus_handle(cx).focus(window);
+            return true;
+        }
         let Some(target) = self.resolve_surface_target(surface_index, cx) else {
             return false;
         };
@@ -529,35 +641,26 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let target = self.resolve_surface_target(surface_index, cx);
-        let cwd = target
-            .as_ref()
+        let target = self.resolve_tab_target(surface_index, cx);
+        if surface_index.is_some() && target.is_none() {
+            return None;
+        }
+        let cwd = self
+            .resolve_surface_target(surface_index, cx)
             .and_then(|target| target.panel.read(cx).cwd().map(str::to_string))
             .or_else(|| self.cwd.clone());
         let (index, _, panel_view) =
             self.new_terminal_panel_view(cwd.as_deref().map(std::path::Path::new), cx);
-
-        if let Some(target) = target {
-            target.tab_panel.update(cx, |tab_panel, cx| {
-                if tab_panel.active_index() != target.tab_position {
-                    tab_panel.set_active_index(target.tab_position, window, cx);
-                }
-                tab_panel.add_panel(panel_view, window, cx);
+        if let Some((tab, position)) = target {
+            tab.update(cx, |tab, cx| {
+                tab.set_active_index(position, window, cx);
+                tab.add_panel(panel_view, window, cx);
             });
-        } else if surface_index.is_none() {
-            if let Some(target_tab_panel) = self.target_tab_panel(Some(window), cx) {
-                target_tab_panel.update(cx, |tab_panel, cx| {
-                    tab_panel.add_panel(panel_view, window, cx);
-                });
-            } else {
-                self.dock_area.update(cx, |area, cx| {
-                    area.add_panel(panel_view, DockPlacement::Center, None, window, cx);
-                });
-            }
         } else {
-            return None;
+            self.dock_area.update(cx, |area, cx| {
+                area.add_panel(panel_view, DockPlacement::Center, None, window, cx);
+            });
         }
-
         cx.notify();
         Some(index)
     }
@@ -569,47 +672,57 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let target = self.resolve_surface_target(surface_index, cx);
-        let cwd = target
-            .as_ref()
+        let Some((tab, _)) = self.resolve_tab_target(surface_index, cx) else {
+            return if surface_index.is_none() {
+                self.add_terminal_to_surface(None, window, cx)
+            } else {
+                None
+            };
+        };
+        let cwd = self
+            .resolve_surface_target(surface_index, cx)
             .and_then(|target| target.panel.read(cx).cwd().map(str::to_string))
             .or_else(|| self.cwd.clone());
+        let (index, _, panel_view) =
+            self.new_terminal_panel_view(cwd.as_deref().map(std::path::Path::new), cx);
+        self.insert_split_panel(&tab, panel_view, placement, window, cx)?;
+        self.track_terminal_panels(cx);
+        cx.emit(WorkspaceEvent::PersistRequested);
+        cx.notify();
+        Some(index)
+    }
 
-        if let Some(target) = target {
-            let (index, panel, _panel_view) =
-                self.new_terminal_panel_view(cwd.as_deref().map(std::path::Path::new), cx);
-            let dock_area = self.dock_area.downgrade();
-            let new_item = DockItem::tab(panel, &dock_area, window, &mut **cx);
-            let new_target_tab_panel = match &new_item {
-                DockItem::Tabs { view, .. } => view.downgrade(),
-                _ => return None,
-            };
-            let current = self.dock_area.read(cx).items().clone();
-            let split = split_dock_item(
-                current,
-                target.tab_panel.entity_id(),
-                new_item,
-                placement,
-                &dock_area,
-                window,
-                &mut **cx,
-            )?;
-
-            self.dock_area.update(cx, |dock_area, cx| {
-                dock_area.set_center(split, window, cx);
-                dock_area.remember_tab_panel(new_target_tab_panel);
-            });
-            self.track_terminal_panels(cx);
-            cx.emit(WorkspaceEvent::PersistRequested);
-            cx.notify();
-            Some(index)
-        } else if surface_index.is_none() {
-            let index = self.current_next_terminal_index(cx);
-            self.split(placement, window, cx);
-            Some(index)
-        } else {
-            None
-        }
+    // Commit the tree change before replying to RPC so callers can immediately
+    // address the created surface by its actual UUID.
+    fn insert_split_panel(
+        &mut self,
+        target: &Entity<TabPanel>,
+        panel: Arc<dyn PanelView>,
+        placement: Placement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let dock = self.dock_area.downgrade();
+        let item = DockItem::tabs(vec![panel], &dock, window, &mut **cx);
+        let DockItem::Tabs { view, .. } = &item else {
+            return None;
+        };
+        let new_target = view.downgrade();
+        let current = self.dock_area.read(cx).items().clone();
+        let split = split_dock_item(
+            current,
+            target.entity_id(),
+            item,
+            placement,
+            &dock,
+            window,
+            &mut **cx,
+        )?;
+        self.dock_area.update(cx, |area, cx| {
+            area.set_center(split, window, cx);
+            area.remember_tab_panel(new_target);
+        });
+        Some(())
     }
 
     pub fn close_surface(
@@ -618,6 +731,15 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if let Some((tab, _, panel)) = self
+            .browser_targets(cx)
+            .into_iter()
+            .find(|(_, _, panel)| surface_index == Some(panel.read(cx).index))
+        {
+            let view: Arc<dyn PanelView> = Arc::new(panel);
+            tab.update(cx, |tab, cx| tab.remove_panel(view, window, cx));
+            return true;
+        }
         let Some(target) = self.resolve_surface_target(surface_index, cx) else {
             return false;
         };
@@ -636,6 +758,18 @@ impl Workspace {
         name: Option<String>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if let Some((_, _, panel)) = self
+            .browser_targets(cx)
+            .into_iter()
+            .find(|(_, _, panel)| surface_index == Some(panel.read(cx).index))
+        {
+            panel.update(cx, |panel, cx| {
+                panel.name = name;
+                cx.notify();
+            });
+            cx.emit(WorkspaceEvent::PersistRequested);
+            return true;
+        }
         let Some(panel) = self
             .resolve_surface_target(surface_index, cx)
             .map(|target| target.panel)
@@ -659,13 +793,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(target) = self.resolve_surface_target(surface_index, cx) else {
+        let Some((tab, position)) = self.resolve_tab_target(surface_index, cx) else {
             return false;
         };
 
-        target.tab_panel.update(cx, |tab_panel, cx| {
-            if tab_panel.active_index() != target.tab_position {
-                tab_panel.set_active_index(target.tab_position, window, cx);
+        tab.update(cx, |tab_panel, cx| {
+            if tab_panel.active_index() != position {
+                tab_panel.set_active_index(position, window, cx);
             }
             tab_panel.next_tab(window, cx);
         });
@@ -678,13 +812,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(target) = self.resolve_surface_target(surface_index, cx) else {
+        let Some((tab, position)) = self.resolve_tab_target(surface_index, cx) else {
             return false;
         };
 
-        target.tab_panel.update(cx, |tab_panel, cx| {
-            if tab_panel.active_index() != target.tab_position {
-                tab_panel.set_active_index(target.tab_position, window, cx);
+        tab.update(cx, |tab_panel, cx| {
+            if tab_panel.active_index() != position {
+                tab_panel.set_active_index(position, window, cx);
             }
             tab_panel.prev_tab(window, cx);
         });
@@ -697,12 +831,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<bool> {
-        let target = self.resolve_surface_target(surface_index, cx)?;
+        let (tab, position) = self.resolve_tab_target(surface_index, cx)?;
         let is_zoomed = self.dock_area.read(cx).is_zoomed();
 
-        target.tab_panel.update(cx, |tab_panel, cx| {
-            if tab_panel.active_index() != target.tab_position {
-                tab_panel.set_active_index(target.tab_position, window, cx);
+        tab.update(cx, |tab_panel, cx| {
+            if tab_panel.active_index() != position {
+                tab_panel.set_active_index(position, window, cx);
             }
         });
 
@@ -712,7 +846,7 @@ impl Workspace {
             });
         } else {
             self.dock_area.update(cx, |dock_area, cx| {
-                dock_area.set_zoomed_in(target.tab_panel, window, cx);
+                dock_area.set_zoomed_in(tab, window, cx);
             });
         }
 
@@ -812,7 +946,42 @@ impl Workspace {
     fn target_terminal_panel(&self, cx: &App) -> Option<Entity<TerminalPanel>> {
         let tab_panel = self.target_tab_panel(None, cx)?;
         let active_panel = tab_panel.read(cx).active_panel(cx)?;
+        if active_panel.panel_name(cx) != "TerminalPanel" {
+            return None;
+        }
         Some(Entity::<TerminalPanel>::from(active_panel.as_ref()))
+    }
+
+    fn resolve_tab_target(
+        &self,
+        index: Option<usize>,
+        cx: &App,
+    ) -> Option<(Entity<TabPanel>, usize)> {
+        let target = self
+            .target_tab_panel(None, cx)
+            .and_then(|tab| tab.read(cx).active_panel(cx))
+            .map(|panel| panel.view().entity_id());
+        for tab in self.dock_area.read(cx).items().all_tab_panels(cx) {
+            for (position, panel) in tab.read(cx).panels().iter().enumerate() {
+                let panel_index = match panel.panel_name(cx) {
+                    "TerminalPanel" => Some(
+                        Entity::<TerminalPanel>::from(panel.as_ref())
+                            .read(cx)
+                            .index(),
+                    ),
+                    "BrowserPanel" => {
+                        Some(Entity::<BrowserPanel>::from(panel.as_ref()).read(cx).index)
+                    }
+                    _ => None,
+                };
+                if index.map_or(Some(panel.view().entity_id()) == target, |index| {
+                    panel_index == Some(index)
+                }) {
+                    return Some((tab.clone(), position));
+                }
+            }
+        }
+        None
     }
 
     fn resolve_surface_target(
@@ -902,10 +1071,14 @@ fn next_terminal_index_from_state(state: Option<&DockAreaState>) -> usize {
 
 fn max_terminal_index(state: &PanelState) -> Option<usize> {
     let mut max_index = match &state.info {
-        PanelInfo::Panel(value) if state.panel_name == "TerminalPanel" => value
-            .get("index")
-            .and_then(|index| index.as_u64())
-            .map(|index| index as usize),
+        PanelInfo::Panel(value)
+            if matches!(state.panel_name.as_str(), "TerminalPanel" | "BrowserPanel") =>
+        {
+            value
+                .get("index")
+                .and_then(|index| index.as_u64())
+                .map(|index| index as usize)
+        }
         _ => None,
     };
 

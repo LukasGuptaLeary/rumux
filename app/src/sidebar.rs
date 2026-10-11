@@ -8,7 +8,7 @@ use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
 
 use crate::app_state::AppState;
 use crate::root_view::{
-    DuplicateWorkspace, ToggleCommandPalette, ToggleNotificationPanel, ToggleSidebar,
+    DuplicateWorkspace, NewBrowser, ToggleCommandPalette, ToggleNotificationPanel, ToggleSidebar,
 };
 use crate::theme;
 
@@ -330,6 +330,16 @@ impl Render for WorkspaceSidebar {
                         div()
                             .flex()
                             .gap(px(2.0))
+                            .child(
+                                Button::new("sidebar-browser")
+                                    .ghost()
+                                    .compact()
+                                    .icon(IconName::Globe)
+                                    .tooltip("New Browser")
+                                    .on_click(cx.listener(|_, _, window, cx| {
+                                        window.dispatch_action(Box::new(NewBrowser), cx)
+                                    })),
+                            )
                             .child(
                                 Button::new("sidebar-btn-2")
                                     .ghost()

@@ -1,20 +1,21 @@
 # rumux
 
-A Rust-native replacement for [cmux](https://github.com/craigsc/cmux) that combines:
+A Rust-native terminal workspace inspired by [cmux](https://github.com/manaflow-ai/cmux) that combines:
 
 - A CLI for git worktree lifecycle management during parallel agent or shell sessions
 - A GPUI desktop application for docked terminals, workspace switching, and session restore
 
-The desktop shell follows the same architectural direction as Zed: pure Rust, GPUI, and native docking primitives rather than a webview stack.
+The desktop shell uses Rust, GPUI and native docking primitives. Browser panes embed the operating system's web engine beside the GPU-rendered terminals.
 
 ## Highlights
 
 - Git worktree orchestration for parallel development sessions
-- Native desktop terminal UI built with GPUI and wgpu
+- Native desktop terminal UI built with GPUI
 - Docked tabs, split panes, zoom, and multi-workspace sidebar
 - Restorable workspace layout and terminal launch directories
 - Local RPC endpoint for automation and editor or agent integration
-- MCP bridge for agent control over the running desktop app
+- MCP bridge for terminal and browser control over the running desktop app
+- Embedded browser tabs and splits with navigation, DOM inspection and form interaction
 - Backward compatibility with existing cmux `.worktrees/` layouts and setup hooks
 
 ## Install
@@ -115,11 +116,11 @@ rumux includes a pure-Rust desktop application built on GPUI.
 
 ### Architecture
 
-- **Rendering:** GPUI + wgpu. No Tauri, React, xterm.js, or browser runtime.
-- **Workspace shell:** `AppState -> Workspace -> DockArea -> TerminalPanel -> TerminalView`
+- **Rendering:** GPUI for the shell and terminal; Wry hosts WKWebView on macOS, WebKitGTK on Linux, and WebView2 on Windows.
+- **Workspace shell:** `AppState -> Workspace -> DockArea -> TerminalPanel/BrowserPanel`
 - **Docking model:** `gpui-component` dock/tree primitives drive tabbed terminals, pane splits, and zoom state.
 - **Terminal runtime:** `portable-pty` + `alacritty_terminal` + `gpui-terminal`
-- **Persistence:** workspaces restore dock layout and terminal launch directories across restarts.
+- **Persistence:** workspaces restore dock layout, pane IDs, terminal launch directories and browser URLs across restarts.
 - **IPC:** Unix domain sockets on Unix by default, loopback TCP on non-Unix. Override with `RUMUX_SOCKET_PATH` or `RUMUX_SOCKET_ADDR`.
 - **Instance model:** one desktop app instance per user-scoped IPC endpoint. A second launch activates the primary instance and exits.
 
@@ -155,12 +156,40 @@ rumux notify --title "Ready for review" --body "Tests passed" --workspace 0 --su
 Current automation model:
 
 - `workspace.*` methods let integrations inspect, create, select, and close workspaces
-- `surface.*` methods operate on the current target terminal by default
-- `surface.*` methods can also target a specific terminal via `surface_index`
+- `surface.*` methods focus, rename, close and lay out terminal or browser panes; terminal I/O methods require a terminal
+- Selectors accept stable `workspace_id`/`surface_id` UUIDs as well as numeric indices; copies receive fresh identities
+- `surface.send_text` with `append_newline` sends the same carriage return as the Enter key
 - `system.activate` raises the primary desktop window, which is also what a second app launch uses for handoff
 - `notification.focus` accepts a notification `id`, focuses its workspace and terminal, and marks it read
 - Independent RPC clients can wait for output and send input concurrently; failed raw RPC calls exit with a nonzero CLI status
 - The RPC contract is intended for local-machine use and is versioned conservatively within a release line, but it is still evolving during `0.1.x`
+
+### Embedded browser
+
+Use the globe button or Cmd/Ctrl+Shift+O to open a browser split. Enter an HTTP(S)
+URL in the address bar. Back, forward and reload controls are available in each
+pane. Browser IDs and URLs restore with the workspace; navigation history is
+kept only while the pane is open.
+
+```bash
+rumux rpc browser.create '{"url":"http://localhost:3000","placement":"right"}'
+# Use the created surface UUID from the response for later calls.
+rumux rpc browser.snapshot '{"surface_id":"<uuid>"}'
+rumux rpc browser.eval '{"surface_id":"<uuid>","expression":"document.title"}'
+rumux rpc browser.fill '{"surface_id":"<uuid>","selector":"#name","text":"Ada"}'
+rumux rpc browser.click '{"surface_id":"<uuid>","selector":"button[type=submit]"}'
+```
+
+The MCP bridge exposes the same browser actions as named tools. Evaluations
+accept synchronous JavaScript expressions; errors and Promise results are
+reported. Snapshots bound page text and interactive elements and omit password
+field values. The page's IPC bridge only reports focus to the shell.
+
+Linux uses X11 or XWayland when `DISPLAY` is available so WebKitGTK can embed a
+native child view. `RUMUX_LINUX_BACKEND=wayland` selects the native Wayland
+terminal shell; embedded browsers require XWayland. Install GTK 3 and
+WebKitGTK 4.1 runtime libraries on Linux, and WebView2 Runtime on Windows.
+Windows browser behavior still requires native CI qualification.
 
 ### MCP Integration
 

@@ -745,7 +745,9 @@ fn next_terminal_index(dock_area: &Entity<gpui_component::dock::DockArea>, cx: &
 
 fn max_terminal_index(state: &PanelState) -> Option<usize> {
     let mut max_index = match &state.info {
-        gpui_component::dock::PanelInfo::Panel(value) if state.panel_name == "TerminalPanel" => {
+        gpui_component::dock::PanelInfo::Panel(value)
+            if matches!(state.panel_name.as_str(), "TerminalPanel" | "BrowserPanel") =>
+        {
             value
                 .get("index")
                 .and_then(|index| index.as_u64())

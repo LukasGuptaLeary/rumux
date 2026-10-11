@@ -41,7 +41,7 @@ It uses isolated temporary configuration and runtime directories.
 Windows, Linux x86-64 and macOS Intel have not been executed locally. The native
 CI matrix is prepared but has not run. Compilation and smoke evidence above do
 not establish packaging, detached process survival, browser or SSH acceptance.
-No branch, PR, release or third-party comment has been published.
+At that checkpoint no branch, PR, release or third-party comment had been published.
 
 ## Workspace and automation checkpoint
 
@@ -67,8 +67,70 @@ the final local barrier and smoke runs also include that correction. A final
 focused CLI regression check rejects non-object RPC params before injecting a
 terminal's origin ID, avoiding a malformed-input panic (121 tests total).
 
+## Published checkpoint and native CI
+
+With explicit user approval, commits `5804afa` and `c583941` were pushed to the
+public `LukasGuptaLeary/rumux` repository and draft
+[PR #9](https://github.com/LukasGuptaLeary/rumux/pull/9) was opened.
+[CI run 38165297268](https://github.com/LukasGuptaLeary/rumux/actions/runs/38165297268)
+is bound to `c5839417e9200c509fbb31b68db6faf3083c0266`.
+Rustfmt, CLI/core, Linux x86-64 desktop tests/smokes, macOS desktop tests/smokes,
+and Linux packaging passed. Windows compiled and passed workspace Rust tests,
+then failed to observe an OSC 133 status signal in the real desktop smoke.
+The browser/platform batch below changes RPC text submission to the same CR as
+the Enter key and explicitly enables VT output in Windows fixture producers.
+These corrections require Windows revalidation; compilation alone is not a
+successful Windows acceptance result.
+
+## Browser and platform batch
+
+Browser panels host the system engine through Wry: WKWebView, WebKitGTK or
+WebView2. They share the dock's tabs/splits and stable identities, restore URLs,
+track page titles, offer back/forward/reload/address controls, and hide native
+views for inactive tabs/workspaces, overlays and other zoomed panes. CLI RPC and
+named MCP tools support navigation, state, bounded snapshots, synchronous
+JavaScript, CSS-selector clicks and form input. Page IPC reports focus only.
+
+The initial Linux attempts exposed two concrete integration defects: creating a
+WebKit context before GTK initialization, then GPUI 0.2.2's unimplemented X11 raw
+window handles. A subsequent attempt exposed Wry's requirement for an Xlib XID
+rather than an XCB handle. Initialization is now lazy, and an adapter borrows the
+same live X11 window ID. `crates/gpui` retains the published 0.2.2 source and
+Apache-2.0 license with only two source files changed: native X11 handles and a
+fallible explicit X11 constructor. Rumux selects X11/XWayland when available
+without changing the environment inherited by terminal programs. See
+`crates/gpui/RUMUX-PATCHES.md` for provenance and the patch removal boundary.
+
+Final local validation on October 11, 2026:
+
+- macOS ARM64 and Linux ARM64: 123 workspace tests plus 28 doctests passed on
+  each platform (28 existing illustrative doctests ignored).
+- macOS native browser/PTY/CLI/MCP integration: 19 Unix-socket checks in 4.76 s
+  and 20 authenticated-TCP checks in 3.63 s.
+- Linux native browser/PTY/CLI/MCP integration: 19 checks in 3.30 s and 20 TCP
+  checks in 3.15 s, with the normal WebKit sandbox. The XWayland selection case
+  also passed all 19 checks in 3.15 s with a Wayland session variable present.
+- Linux source archive SHA-256:
+  `ee2d00c4e1a469797a07d722e02154a6d4c55b95df4d1dd0437faa90a88c0b0f`.
+  Browser validation image manifest:
+  `sha256:0f20c67a76a6da29474bcba1c914164996d2464fea2089da930d9f3e267ee987`.
+- Native macOS inspection confirmed terminal/browser bounds, real input and
+  button clicks, command-palette hiding, and browser zoom.
+- Formatting, whitespace, Python/shell syntax checks passed. Clippy completed
+  with existing warnings; the vendored GPUI source also has upstream float
+  inference warnings on Rust 1.97.
+
+The smoke suite additionally proves URL/ID restart restore, mixed pane routing,
+form values containing quotes/Unicode, evaluation errors, rejected unsupported
+navigation, Promise rejection and password-field omission in DOM snapshots.
+The CI matrix now includes browser tests on all three platforms. Browser
+behavior on Windows and the proposed Enter-key correction remain unqualified
+until this batch runs there. Native Wayland browser hosting is unsupported;
+Linux browser panes use X11/XWayland. Browser navigation history is not restored,
+and JavaScript evaluation is synchronous.
+
 ## Next acceptance boundaries
 
-Durable terminal ownership, browser and SSH workflows and three-platform installation proof
+Durable terminal ownership, Windows browser qualification, SSH workflows and three-platform installation proof
 remain required. Any product claim must distinguish configured gates from
 executed results, and restored layout from a still-running terminal process.
