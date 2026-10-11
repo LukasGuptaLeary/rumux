@@ -55,8 +55,12 @@ def assert_windows_private(path):
               "if (@($rules).Count -eq 0) { throw 'Missing owner access rule' }; "
               "foreach ($rule in $rules) { if ($rule.AccessControlType -eq 'Allow' "
               "-and $rule.IdentityReference.Value -ne $owner) { throw 'Unexpected allowed identity' } }")
+    # Python inherits pwsh's module path in Actions. Windows PowerShell must
+    # reconstruct its own path rather than attempting to load PowerShell 7 DLLs.
+    env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+    env["RUMUX_TEST_PRIVATE_PATH"] = str(path)
     result = subprocess.run(["powershell", "-NoProfile", "-Command", script],
-        env=dict(os.environ, RUMUX_TEST_PRIVATE_PATH=str(path)), capture_output=True, text=True, timeout=10)
+        env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
 
 
@@ -111,10 +115,17 @@ def exercise_service(rpc, launch, stop, python_command, cli, env, root, config,
               " if i==5: print('\\x1b]777;notify;Detached notice;service stayed alive\\x07',flush=True)\n time.sleep(.1)\n")
     launch_ticker = "import subprocess,sys;subprocess.Popen([sys.executable,'-u','-c'," + repr(ticker) + "]);print('TICKER_STARTED')"
     rpc("surface.send_text", dict(target, text=python_command(launch_ticker), append_newline=True))
-    eventually(lambda: counter.exists() and int(counter.read_text()) > 0)
-    before = int(counter.read_text())
+    def counter_value():
+        # write_text truncates before writing. A concurrent read can see an
+        # empty file; return no observation until a complete number is visible.
+        try:
+            return int(counter.read_text())
+        except (FileNotFoundError, ValueError):
+            return 0
+
+    before = eventually(counter_value)
     stop()
-    eventually(lambda: int(counter.read_text()) > before)
+    eventually(lambda: counter_value() > before)
     assert process_id() == shell_pid
     assert service_rpc(config, "ping")["result"]["pid"] == service_pid
     assert "OFFLINE_TICK_" in packet_text(snapshot()["packet"])
@@ -140,7 +151,7 @@ def exercise_service(rpc, launch, stop, python_command, cli, env, root, config,
     eventually(lambda: not snapshot()["metadata"]["notifications"])
     result = rpc("surface.run_command", dict(target, command="echo SERVICE_RESUMED", timeout_ms=10000))
     assert result["completed"] and "SERVICE_RESUMED" in result["output"], result
-    eventually(lambda: int(counter.read_text()) == 20)
+    eventually(lambda: counter_value() == 20)
     checks.append("same PTY process and progressing background job across desktop restart")
     checks.append("incompatible service preservation and resumed terminal input")
 

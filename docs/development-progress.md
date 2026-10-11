@@ -301,3 +301,25 @@ about seven minutes rebuilding Windows before the same crash. Cache-on-failure
 now preserves dependency artifacts while Cargo still validates source/dependency
 hashes and every native test continues to run. Windows browser/SSH and hosted
 installed-package acceptance remain open.
+
+## Native harness corrections
+
+At `063e33e`, both macOS/Linux debug suites and the Linux installed package
+passed. The installed macOS TCP suite caught a fixture race: its background
+counter can briefly be empty during `write_text`. The check now retains the
+first complete positive observation and retries incomplete reads, while still
+requiring progress after desktop exit and the final count of 20. The installed
+macOS package passed both full suites locally with this correction.
+
+Windows stopped before the browser-close diagnostic because Python inherited
+PowerShell 7 module paths when launching Windows PowerShell 5.1. ACL inspection
+and installer execution now remove `PSModulePath` only from the child environment,
+as documented by Microsoft; all permission and damaged-package checks remain.
+This setup fix still requires native Windows execution.
+
+A live macOS UI test confirmed keyboard input, terminal find and truecolor output.
+Reading the closed app through native UI automation then relaunched the owned
+test bundle without its isolated environment. The extra app and service were
+identified by exact binary path/PID and stopped; available default session files
+were retained in a private recovery directory. Subsequent lifecycle tests use
+the owned launch/stop harness and do not query a closed app through automation.

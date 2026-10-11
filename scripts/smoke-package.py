@@ -62,10 +62,14 @@ def main():
         readme = package / "README.txt"
         original = readme.read_bytes()
         readme.write_bytes(original + b"tampered")
-        rejected = subprocess.run(install, capture_output=True, text=True)
+        # Windows PowerShell rebuilds its native module path when Python was
+        # launched by pwsh; otherwise Get-FileHash resolves incompatible DLLs.
+        install_env = {key: value for key, value in os.environ.items()
+                       if key.upper() != "PSMODULEPATH"} if os.name == "nt" else None
+        rejected = subprocess.run(install, env=install_env, capture_output=True, text=True)
         assert rejected.returncode != 0 and not prefix.exists(), "Installer accepted a damaged package"
         readme.write_bytes(original)
-        subprocess.run(install, check=True)
+        subprocess.run(install, env=install_env, check=True)
         extension = ".exe" if os.name == "nt" else ""
         app = prefix / "bin" / ("rumux-app" + extension)
         cli = prefix / "bin" / ("rumux" + extension)
