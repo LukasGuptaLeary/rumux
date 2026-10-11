@@ -54,7 +54,7 @@ def assert_windows_private(path):
               "$rules=$acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]); "
               "if (@($rules).Count -eq 0) { throw 'Missing owner access rule' }; "
               "foreach ($rule in $rules) { if ($rule.AccessControlType -eq 'Allow' "
-              "-and $rule.IdentityReference.Value -ne $owner) { throw 'Unexpected allowed identity' } }")
+              "-and $rule.IdentityReference.Value -ne $owner) { throw \"Unexpected allowed identity $($rule.IdentityReference.Value)\" } }")
     # Python inherits pwsh's module path in Actions. Windows PowerShell must
     # reconstruct its own path rather than attempting to load PowerShell 7 DLLs.
     env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}

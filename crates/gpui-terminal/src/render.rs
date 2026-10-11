@@ -234,16 +234,13 @@ impl TerminalRenderer {
     /// Measure cell dimensions based on actual font metrics.
     ///
     /// This method measures the actual width and height of characters
-    /// using the GPUI text system. It uses the '│' (BOX DRAWINGS LIGHT VERTICAL)
-    /// character which spans the full cell height in properly designed terminal fonts.
+    /// using the GPUI text system. ASCII 'M' measures the configured font's
+    /// advance without invoking a wider box-drawing fallback font.
     ///
     /// # Arguments
     ///
     /// * `window` - The GPUI window for text system access
     pub fn measure_cell(&mut self, window: &mut Window) {
-        // Measure using '│' (U+2502, BOX DRAWINGS LIGHT VERTICAL)
-        // This character spans the full cell height in terminal fonts, making it
-        // ideal for measuring exact cell dimensions used by TUIs
         let font = Font {
             family: self.font_family.clone().into(),
             features: FontFeatures::default(),
@@ -253,7 +250,7 @@ impl TerminalRenderer {
         };
 
         let text_run = TextRun {
-            len: "│".len(),
+            len: 1,
             font,
             color: gpui::black(),
             background_color: None,
@@ -261,10 +258,11 @@ impl TerminalRenderer {
             strikethrough: None,
         };
 
-        // Shape the box-drawing character to get cell metrics
+        // Use the same font metrics as ordinary terminal text. Box drawing is
+        // painted inside these cells and must not select a different advance.
         let shaped = window
             .text_system()
-            .shape_line("│".into(), self.font_size, &[text_run], None);
+            .shape_line("M".into(), self.font_size, &[text_run], None);
 
         // Get the width from the shaped line
         if shaped.width > px(0.0) {

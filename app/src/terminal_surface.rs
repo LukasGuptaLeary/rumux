@@ -36,8 +36,18 @@ fn attach(
     let client = cx.global::<ServiceClient>().0.clone();
     let settings = RumuxConfig::load();
     client.call("open", serde_json::json!({"id":id.to_string(),"cwd":cwd.map(|path|path.to_string_lossy()),"ssh":ssh,"history":settings.scrollback}))?;
+    let font_family = if cx
+        .text_system()
+        .all_font_names()
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(&settings.font_family))
+    {
+        settings.font_family
+    } else {
+        crate::config::default_terminal_font().to_string()
+    };
     let config = TerminalConfig {
-        font_family: settings.font_family,
+        font_family,
         font_size: px(settings.font_size),
         cols: 80,
         rows: 24,

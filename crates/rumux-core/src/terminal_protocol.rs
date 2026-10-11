@@ -18,9 +18,17 @@ pub struct TerminalProtocolParser {
     state: u8,
     payload: Vec<u8>,
     kitty: BTreeMap<String, (String, String)>,
+    posix_paths: bool,
 }
 
 impl TerminalProtocolParser {
+    /// SSH directory URIs describe the remote POSIX filesystem, even when the
+    /// client runs on Windows. Local terminals retain native drive/UNC decoding.
+    pub fn with_posix_paths(mut self, enabled: bool) -> Self {
+        self.posix_paths = enabled;
+        self
+    }
+
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<TerminalSignal> {
         let mut signals = Vec::new();
         for &byte in bytes {
@@ -114,14 +122,14 @@ impl TerminalProtocolParser {
                 }
                 // Unix shells normally include the local hostname in OSC 7.
                 // On Windows preserve the host, which can represent a UNC path.
-                #[cfg(unix)]
-                let path = std::path::PathBuf::from(
-                    percent_encoding::percent_decode_str(uri.path())
-                        .decode_utf8()
-                        .ok()?
-                        .as_ref(),
-                );
-                #[cfg(not(unix))]
+                if cfg!(unix) || self.posix_paths {
+                    return Some(TerminalSignal::WorkingDirectory(
+                        percent_encoding::percent_decode_str(uri.path())
+                            .decode_utf8()
+                            .ok()?
+                            .into_owned(),
+                    ));
+                }
                 let path = uri.to_file_path().ok()?;
                 Some(TerminalSignal::WorkingDirectory(
                     path.to_string_lossy().into_owned(),
@@ -323,6 +331,20 @@ mod tests {
         assert_eq!(
             parser.feed(b"\x1b]7;file://my-machine.local/tmp/project\x07"),
             vec![TerminalSignal::WorkingDirectory("/tmp/project".into())]
+        );
+    }
+
+    #[test]
+    fn remote_directory_uses_posix_paths_on_every_client_platform() {
+        let mut parser = TerminalProtocolParser::default().with_posix_paths(true);
+        assert_eq!(
+            parser.feed(b"\x1b]7;file://remote.example/tmp/my%20project%27s\x07"),
+            vec![TerminalSignal::WorkingDirectory("/tmp/my project's".into())]
+        );
+        assert!(
+            parser
+                .feed(b"\x1b]7;https://remote.example/tmp/project\x07")
+                .is_empty()
         );
     }
 }

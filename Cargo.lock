@@ -5930,6 +5930,7 @@ dependencies = [
  "toml 0.8.23",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
  "wry",
 ]
 

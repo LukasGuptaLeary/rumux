@@ -20,7 +20,7 @@ pub struct RumuxConfig {
 impl Default for RumuxConfig {
     fn default() -> Self {
         Self {
-            font_family: "JetBrains Mono".to_string(),
+            font_family: default_terminal_font().to_string(),
             font_size: 14.0,
             scrollback: 10_000,
             persist_scrollback: true,
@@ -30,6 +30,16 @@ impl Default for RumuxConfig {
             desktop_notifications: true,
             agent_command: "claude".to_string(),
         }
+    }
+}
+
+pub fn default_terminal_font() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Menlo"
+    } else if cfg!(target_os = "windows") {
+        "Consolas"
+    } else {
+        "DejaVu Sans Mono"
     }
 }
 
@@ -128,7 +138,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = RumuxConfig::default();
-        assert_eq!(config.font_family, "JetBrains Mono");
+        assert_eq!(config.font_family, default_terminal_font());
         assert_eq!(config.font_size, 14.0);
         assert_eq!(config.scrollback, 10_000);
     }

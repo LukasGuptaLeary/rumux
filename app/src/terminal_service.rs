@@ -128,7 +128,17 @@ fn save_json(path: &Path, value: &impl Serialize) -> Result<()> {
 pub fn protect_windows_path(path: &Path, directory: bool) -> Result<()> {
     #[cfg(windows)]
     {
+        use std::os::windows::ffi::OsStrExt;
         use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
+            SetNamedSecurityInfoW,
+        };
+        use windows_sys::Win32::Security::{
+            DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl,
+            PROTECTED_DACL_SECURITY_INFORMATION,
+        };
         let output = std::process::Command::new("whoami")
             .args(["/user", "/fo", "csv", "/nh"])
             .creation_flags(0x08000000)
@@ -149,21 +159,68 @@ pub fn protect_windows_path(path: &Path, directory: bool) -> Result<()> {
             sid.starts_with("S-1-") && sid[4..].chars().all(|ch| ch.is_ascii_digit() || ch == '-'),
             "Invalid profile owner identity"
         );
-        let grant = if directory {
-            format!("*{sid}:(OI)(CI)F")
-        } else {
-            format!("*{sid}:F")
+        // Replace the complete DACL in one operation. icacls /grant:r only
+        // replaces this user's grants and leaves other explicit grants intact.
+        // Protecting inheritance alone cannot make an existing file private.
+        let inheritance = if directory { "OICI" } else { "" };
+        let sddl: Vec<u16> = format!("D:P(A;{inheritance};FA;;;{sid})")
+            .encode_utf16()
+            .chain([0])
+            .collect();
+        struct Descriptor(*mut std::ffi::c_void);
+        impl Drop for Descriptor {
+            fn drop(&mut self) {
+                // SAFETY: ConvertStringSecurityDescriptor allocates with LocalAlloc.
+                unsafe {
+                    LocalFree(self.0);
+                }
+            }
+        }
+        let mut descriptor = Descriptor(std::ptr::null_mut());
+        // SAFETY: NUL-terminated SDDL and writable descriptor output remain valid.
+        let converted = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor.0,
+                std::ptr::null_mut(),
+            )
         };
-        let output = std::process::Command::new("icacls")
-            .arg(path)
-            .args(["/inheritance:r", "/grant:r"])
-            .arg(grant)
-            .creation_flags(0x08000000)
-            .output()?;
         ensure!(
-            output.status.success(),
-            "Unable to protect terminal state at {}",
-            path.display()
+            converted != 0,
+            "Unable to create private terminal permissions: {}",
+            std::io::Error::last_os_error()
+        );
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut acl = std::ptr::null_mut();
+        // SAFETY: The descriptor is valid until its RAII owner is dropped.
+        let read = unsafe {
+            GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut acl, &mut defaulted)
+        };
+        ensure!(
+            read != 0 && present != 0 && !acl.is_null(),
+            "Missing private terminal access list"
+        );
+        let name: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        // SAFETY: The path and ACL are valid for the call. Protected DACL flags
+        // replace all grants without briefly restoring broader inherited access.
+        let result = unsafe {
+            SetNamedSecurityInfoW(
+                name.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                acl,
+                std::ptr::null_mut(),
+            )
+        };
+        ensure!(
+            result == 0,
+            "Unable to protect terminal state at {}: {}",
+            path.display(),
+            std::io::Error::from_raw_os_error(result as i32)
         );
     }
     #[cfg(not(windows))]
@@ -377,7 +434,7 @@ impl Terminal {
             id,
             state: Mutex::new(State {
                 terminal,
-                protocol: TerminalProtocolParser::default(),
+                protocol: TerminalProtocolParser::default().with_posix_paths(launch.ssh.is_some()),
                 revision: 1,
                 history,
                 history_requested: launch.history.min(gpui_terminal::mirror::MAX_HISTORY),
@@ -990,4 +1047,37 @@ fn serve(mut stream: TcpStream, service: &Service, token: &str) -> Result<()> {
         service.stopping.store(true, Ordering::Release);
     }
     written
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn private_permissions_replace_existing_explicit_grants() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("private-state");
+        std::fs::write(&file, b"owned test fixture").unwrap();
+        // A pre-existing explicit Everyone grant survives /grant:r for a
+        // different SID. The production operation must remove it completely.
+        let grant = std::process::Command::new("icacls")
+            .arg(&file)
+            .args(["/grant", "*S-1-1-0:R"])
+            .output()
+            .unwrap();
+        assert!(grant.status.success());
+        protect_windows_path(&file, false).unwrap();
+        let inspected = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command",
+                "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=Get-Acl -LiteralPath $env:RUMUX_TEST_PRIVATE_PATH; $rules=$acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]); if (@($rules).Count -ne 1 -or $rules[0].IdentityReference -ne $sid -or $rules[0].AccessControlType -ne 'Allow' -or -not $acl.AreAccessRulesProtected) { throw 'Private permissions were not replaced' }"])
+            .env("RUMUX_TEST_PRIVATE_PATH", &file)
+            .env_remove("PSModulePath")
+            .output()
+            .unwrap();
+        assert!(
+            inspected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&inspected.stderr)
+        );
+    }
 }

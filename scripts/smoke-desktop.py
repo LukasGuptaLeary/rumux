@@ -285,10 +285,6 @@ def main():
             assert rpc("workspace.current")["id"] != workspace_id, duplicate
             assert original_ids.isdisjoint({s["id"] for s in rpc("surface.list")["surfaces"]})
             checks.append("duplicated workspaces receive independent identities")
-            from terminal_service_checks import exercise_service
-            exercise_service(rpc, launch, stop, python_command, cli, env, root,
-                             config, windows, checks, eventually)
-
             if args.browser:
                 class Fixture(http.server.BaseHTTPRequestHandler):
                     def log_message(self, *args):
@@ -390,6 +386,9 @@ def main():
                     finally:
                         fixture.shutdown()
                         thread.join(timeout=5)
+            from terminal_service_checks import exercise_service
+            exercise_service(rpc, launch, stop, python_command, cli, env, root,
+                             config, windows, checks, eventually)
             if args.ssh:
                 from ssh_fixture import SshFixture
                 with SshFixture(root) as fixture:

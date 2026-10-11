@@ -323,3 +323,33 @@ test bundle without its isolated environment. The extra app and service were
 identified by exact binary path/PID and stopped; available default session files
 were retained in a private recovery directory. Subsequent lifecycle tests use
 the owned launch/stop harness and do not query a closed app through automation.
+
+## Windows permission and remote-path corrections
+
+At `cb09fae`, the hosted debug and installed suites passed on both macOS and
+Linux. Windows ACL inspection reached the real files and rejected an additional
+allowed identity. `icacls /grant:r` replaces only the named user's explicit
+grants; other explicit grants survive. The protection operation now supplies a
+complete, owner-only protected DACL through the native Windows API, without an
+intermediate broader access list. A Windows regression seeds an explicit
+Everyone grant and independently inspects its removal with Get-Acl. The exact
+production helper cross-compiles locally for Windows MSVC; native execution is
+still required. Browser tests now precede service tests, retaining every check
+while allowing the close diagnostic to run independently of permission checks.
+
+SSH protocol parsing now explicitly uses remote POSIX paths on every client
+platform. This corrects Windows OSC 7 decoding without changing local drive/UNC
+handling and has a platform-independent regression. Native monospace defaults
+are Menlo, Consolas and DejaVu Sans Mono; unavailable configured fonts fall back
+to those defaults. Cell width uses ASCII font metrics instead of a box-drawing
+fallback. Live macOS inspection verified aligned columns and borders in a
+canonical-path owned bundle, then stopped its exact app and service through the
+harness without querying the closed app.
+
+The batch passed 136 workspace tests and 28 doctests on macOS ARM64 and Linux
+ARM64, plus installed native browser/SSH/service suites on both transports.
+macOS took 10.05/9.72 s. Linux frozen source archive SHA-256 is
+`1da724d379ef17b282df3ee69817e62a55aaa74f5c93a5d8f3f4845c870ce5e1`;
+the same validation image and cached Cargo volume were reused. Both package
+manifests record `cb09fae` plus the explicitly dirty correction tree. Native
+Windows browser, permissions, history and SSH acceptance remain open.
