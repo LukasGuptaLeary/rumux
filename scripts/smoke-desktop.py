@@ -118,17 +118,23 @@ def main():
             nonlocal debugger, debugger_log
             if not windows or not os.environ.get("RUMUX_TRACE_WINDOWS_CLOSE"):
                 return
-            candidates = [shutil.which("gdb"), r"C:\msys64\mingw64\bin\gdb.exe",
-                          r"C:\msys64\ucrt64\bin\gdb.exe"]
+            candidates = [r"C:\msys64\mingw64\bin\gdb.exe",
+                          r"C:\msys64\ucrt64\bin\gdb.exe", shutil.which("gdb")]
             gdb = next((path for path in candidates if path and Path(path).is_file()), None)
             assert gdb, "Native Windows close diagnostics require the runner's GDB"
             debugger_log = debugger_path.open("w", encoding="utf-8")
-            debugger = subprocess.Popen([gdb, "--batch", "--nx", "-q", str(app),
-                "-ex", "set pagination off", "-ex", "set confirm off",
-                "-ex", "set print frame-arguments none", "-ex", "set print thread-events off",
-                "-ex", f"attach {process.pid}", "-ex", "echo RUMUX_DEBUGGER_ATTACHED\\n",
-                "-ex", "continue", "-ex", "info sharedlibrary", "-ex", "info files",
-                "-ex", "thread apply all bt 120", "-ex", "detach"], stdout=debugger_log, stderr=debugger_log)
+            # Some Windows GDB distributions split multiword -ex arguments
+            # differently from Python's CommandLineToArgvW quoting. A command
+            # file keeps every debugger instruction intact and avoids MSYS paths.
+            commands = root / "debugger-commands.gdb"
+            commands.write_text("\n".join([
+                "set pagination off", "set confirm off", "set print frame-arguments none",
+                "set print thread-events off", 'file "' + app.as_posix() + '"',
+                f"attach {process.pid}", "echo RUMUX_DEBUGGER_ATTACHED\\n", "continue",
+                "info sharedlibrary", "info files", "thread apply all bt 120", "detach", ""
+            ]), encoding="utf-8")
+            debugger = subprocess.Popen([gdb, "--batch", "--nx", "-q", "--command=" + commands.as_posix()],
+                stdout=debugger_log, stderr=debugger_log)
             eventually(lambda: "RUMUX_DEBUGGER_ATTACHED" in debugger_path.read_text(encoding="utf-8", errors="replace"))
 
         def launch():
@@ -348,9 +354,9 @@ def main():
                         checks.append("MCP native browser control")
 
                         rpc("surface.rename", dict(browser_target, name="Preview tab"))
+                        trace_mixed_layout_close()
                         terminal = rpc("surface.split", dict(browser_target, placement="down"))["created"]
                         assert terminal["kind"] == "terminal" and terminal["id"] != browser["id"]
-                        trace_mixed_layout_close()
                         rpc("surface.close", {"surface_id":terminal["id"]})
                         tab = rpc("surface.create", browser_target)["created"]
                         eventually(lambda: not rpc("browser.state", browser_target)["visible"])
@@ -391,6 +397,8 @@ def main():
                              config, windows, checks, eventually)
             if args.ssh:
                 from ssh_fixture import SshFixture
+                if windows:
+                    from windows_ssh_fixture import WslSshFixture as SshFixture
                 with SshFixture(root) as fixture:
                     connection = fixture.connection
                     create = subprocess.run([str(cli), "ssh", f'{connection["user"]}@{connection["host"]}',
@@ -425,7 +433,7 @@ def main():
                     rpc("workspace.select", {"workspace_id":remote_id})
                     checks.append("typed SSH CLI and MCP to real remote PTYs")
 
-                    change = "cd -- " + shlex.quote(str(fixture.changed_directory)) + "; " + python_command(
+                    change = "cd -- " + shlex.quote(str(fixture.changed_directory)) + "; " + fixture.python_command(
                         f"import sys;sys.stdout.write('\\x1b]7;{fixture.changed_directory.as_uri()}\\x07');sys.stdout.flush()")
                     rpc("surface.send_text", dict(remote_target, text=change, append_newline=True))
                     eventually(lambda: next(s for s in rpc("surface.list")["surfaces"] if s["id"] == remote["id"])["cwd"] == str(fixture.changed_directory))

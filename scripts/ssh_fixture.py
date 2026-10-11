@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import socket
 import subprocess
 import sys
@@ -31,6 +32,10 @@ class SshFixture:
         self.thread = None
         self.log = None
         self.auth_directory = None
+        self.remote_python = sys.executable
+
+    def python_command(self, code):
+        return shlex.quote(self.remote_python) + " -c " + shlex.quote(code)
 
     def __enter__(self):
         try:
@@ -75,6 +80,9 @@ class SshFixture:
         self.connection = {"host":"127.0.0.1", "user":getpass.getuser(), "port":self.port,
                            "directory":str(self.directory), "identity_file":str(self.root / "client_key"),
                            "known_hosts_file":str(known), "config_file":str(client_config)}
+        return self.listen_and_preview()
+
+    def listen_and_preview(self):
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             if self.process.poll() is not None:

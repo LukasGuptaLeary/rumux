@@ -353,3 +353,21 @@ macOS took 10.05/9.72 s. Linux frozen source archive SHA-256 is
 the same validation image and cached Cargo volume were reused. Both package
 manifests record `cb09fae` plus the explicitly dirty correction tree. Native
 Windows browser, permissions, history and SSH acceptance remain open.
+
+At `aace837`, all hosted macOS/Linux gates passed, and the installed optimized
+Windows package passed 28 native checks in 21.73 s, including mixed browser
+layout close and service authentication, private ACLs, detach/reattach and cold
+history. The explicit-Everyone ACL regression passed in the Windows unit suite.
+The Windows debug build still overflowed during the mixed-layout fixture.
+GDB split multiword command-line instructions and did not attach; it now reads
+an instruction file and attaches before the split's first redraw. This is a
+diagnostic correction, not a demonstrated fix for the debug crash.
+
+Owned WSL1 fixture scripts prepare a checksum-pinned Canonical rootfs for a
+POSIX remote SSH target on disposable Windows CI machines. They suppress default
+service startup, bind only a configured loopback sshd, verify a real Windows
+OpenSSH client with strict host keys, and unregister only their uniquely named
+distribution. The native desktop, service and client run outside WSL. POSIX
+remote Python commands now use the fixture's interpreter rather than the
+Windows client's executable. The common harness passed macOS/Linux suites;
+Windows execution and workflow integration of this fixture remain pending.
