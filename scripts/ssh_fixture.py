@@ -86,16 +86,18 @@ class SshFixture:
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
+                message = self.server_log()
                 self.cleanup()
-                raise RuntimeError((self.root / "sshd.log").read_text())
+                raise RuntimeError(message)
             try:
                 with socket.create_connection(("127.0.0.1", self.port), timeout=.1):
                     break
             except OSError:
                 time.sleep(.05)
         else:
+            message = self.server_log()
             self.cleanup()
-            raise RuntimeError("SSH fixture did not listen")
+            raise RuntimeError("SSH fixture did not listen: " + message)
 
         class Preview(http.server.BaseHTTPRequestHandler):
             def log_message(self, *args):
@@ -113,6 +115,11 @@ class SshFixture:
         self.local_port = free_port()
         self.connection["forwards"] = [{"local_port":self.local_port,"remote_port":self.server.server_port}]
         return self
+
+    def server_log(self):
+        if self.log is not None:
+            self.log.flush()
+        return (self.root / "sshd.log").read_text(errors="replace")
 
     def cleanup(self):
         if self.server is not None:

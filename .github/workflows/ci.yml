@@ -80,7 +80,7 @@ jobs:
           python3 scripts/smoke-desktop.py --browser --ssh
           python3 scripts/smoke-desktop.py --browser --ssh --tcp
       - name: Desktop PTY smoke test (Windows)
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows' && steps.windows_ssh_host.conclusion == 'success'
         env:
           RUMUX_TRACE_WINDOWS_CLOSE: '1'
         run: python scripts/smoke-desktop.py --app target/debug/rumux-app.exe --cli target/debug/rumux.exe --browser --ssh
@@ -135,7 +135,7 @@ jobs:
         if: runner.os == 'macOS'
         run: python3 scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-aarch64-apple-darwin.zip --ssh
       - name: Install and exercise package (Windows)
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows' && steps.windows_ssh_host.conclusion == 'success'
         run: python scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-x86_64-pc-windows-msvc.zip --ssh
       - name: Cache verified Windows SSH target rootfs
         if: always() && runner.os == 'Windows' && steps.wsl_rootfs.outputs.cache-hit != 'true' && steps.windows_ssh_host.outputs.rootfs_verified == 'true'

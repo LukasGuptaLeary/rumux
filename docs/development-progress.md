@@ -414,3 +414,21 @@ OpenSSH connection, and runs the complete debug and installed SSH suites.
 Scripts pipe UTF-8 bytes to preserve POSIX LF. Verified rootfs bytes are cached
 even if a later native check fails, and an always-run cleanup unregisters only
 the owned distribution. This workflow is configured, not yet qualified evidence.
+
+At `5d0a1b0`, all hosted macOS/Linux debug and installed gates passed.
+Windows passed 140 workspace tests and 28 doctests, including the small-stack
+render regression and owner-only ACL regression. Both Windows jobs prepared the
+WSL1 target and their real Windows OpenSSH connection passed. Fixture teardown
+then failed with WinError 32 on its Windows `sshd.log`: a WSL process retained
+an inherited file handle. This prevented the desktop SSH stages from running;
+it is not evidence that the live Windows rendering fix passed.
+
+WSL server logs now remain inside the owned POSIX root, with Windows stdio sent
+to the null device. Failure diagnostics read that log before removing the root.
+No cleanup errors are ignored. The desktop gate runs when target setup succeeds,
+even if the separate fixture verification fails, so a setup failure cannot hide
+independent product diagnostics; the failed verification still fails the job.
+The common harness passed installed macOS 36/37 checks in 10.58/9.99 s and
+Linux's retained optimized binaries passed 36/37 checks in 8.78/8.06 s. No Rust
+code changed in this fixture correction. Python compilation, actionlint and
+whitespace checks passed; native Windows cleanup still requires execution.

@@ -107,7 +107,7 @@ jobs:
         run: python scripts/windows_ssh_fixture.py
 
       - name: Qualify installed package (Windows)
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows' && steps.windows_ssh_host.conclusion == 'success'
         run: python scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.zip --ssh
 
       - name: Cache verified Windows SSH target rootfs

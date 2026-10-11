@@ -58,13 +58,21 @@ class WslSshFixture(SshFixture):
         known.write_text(f"[127.0.0.1]:{self.port} " + self.remote("cat " + str(host_key) + ".pub").stdout, encoding="utf-8")
         client_config = self.root / "client_config"
         client_config.write_text("", encoding="utf-8")
-        self.log = (self.root / "sshd.log").open("w+")
+        # WSL's persistent Windows host can retain inherited file handles after
+        # wsl.exe exits. Keep server logs inside the owned POSIX filesystem so
+        # TemporaryDirectory cleanup can delete every Windows fixture file.
+        server = shlex.join(["/usr/sbin/sshd", "-D", "-e", "-f", str(config)])
+        server += " > " + shlex.quote(str(self.remote_root / "sshd.log")) + " 2>&1"
         self.process = subprocess.Popen(["wsl.exe", "-d", self.distribution, "-u", "root", "--exec",
-            "/usr/sbin/sshd", "-D", "-e", "-f", str(config)], stdout=self.log, stderr=self.log)
+            "/bin/sh", "-c", "exec " + server], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.connection = {"host": "127.0.0.1", "user": "root", "port": self.port,
                            "directory": str(self.directory), "identity_file": str(key),
                            "known_hosts_file": str(known), "config_file": str(client_config)}
         return self.listen_and_preview()
+
+    def server_log(self):
+        result = self.remote("cat " + shlex.quote(str(self.remote_root / "sshd.log")), check=False)
+        return result.stdout + result.stderr
 
     def cleanup(self):
         # Match the exact owned config in /proc before signalling a remote PID.
