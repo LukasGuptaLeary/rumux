@@ -70,7 +70,7 @@ rumux/
 │       ├── notifications.rs      # Notification model
 │       ├── socket_server.rs      # Local RPC transport (Unix socket or loopback TCP)
 │       ├── session.rs            # Session save/restore
-│       └── theme.rs              # Catppuccin Mocha color palette + UI colors
+│       └── theme.rs              # Readable ANSI palette + consistent UI colors
 ```
 
 ## Architecture

@@ -103,6 +103,7 @@ fn main() {
         cx.set_global(terminal_service::ServiceClient(terminal_client));
         gpui_component::init(cx);
         gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
+        theme::apply_component_theme(cx);
 
         // Register panel types for DockArea serialization
         terminal_panel::register(cx);

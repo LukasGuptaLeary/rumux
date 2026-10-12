@@ -35,6 +35,7 @@ fn attach(
 ) -> Result<Entity<TerminalView>> {
     let client = cx.global::<ServiceClient>().0.clone();
     let settings = RumuxConfig::load();
+    let (font_size, line_height, padding) = settings.terminal_metrics();
     client.call("open", serde_json::json!({"id":id.to_string(),"cwd":cwd.map(|path|path.to_string_lossy()),"ssh":ssh,"history":settings.scrollback}))?;
     let font_family = if cx
         .text_system()
@@ -48,12 +49,12 @@ fn attach(
     };
     let config = TerminalConfig {
         font_family,
-        font_size: px(settings.font_size),
+        font_size: px(font_size),
         cols: 80,
         rows: 24,
         scrollback: settings.scrollback,
-        line_height_multiplier: 1.0,
-        padding: Edges::all(px(4.0)),
+        line_height_multiplier: line_height,
+        padding: Edges::all(px(padding)),
         colors: theme::catppuccin_mocha(),
     };
     let alive = Arc::new(AtomicBool::new(true));

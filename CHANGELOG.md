@@ -4,6 +4,16 @@ All notable changes to this project should be recorded in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- More readable terminal defaults: 15 px text, 1.25 line height and 12 px pane padding, with configurable spacing
+- Neutral dark terminal/chrome surfaces, brighter comments and stronger text contrast
+
+### Fixed
+
+- Terminal dim, inverse and concealed styles, including styled backgrounds and box drawing
+- Indexed palette overrides supplied by applications and double centering of text with extra leading
+
 ## [0.2.0] - 2026-10-11
 
 ### Added
