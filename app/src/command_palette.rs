@@ -15,6 +15,12 @@ struct PaletteCommand {
 
 const COMMANDS: &[PaletteCommand] = &[
     PaletteCommand {
+        label: "Connect SSH",
+        shortcut: "",
+        mac_shortcut: "",
+        action: || Box::new(ConnectSsh),
+    },
+    PaletteCommand {
         label: "New Workspace",
         shortcut: "Ctrl+Shift+N",
         mac_shortcut: "Cmd+Shift+N",
@@ -43,6 +49,12 @@ const COMMANDS: &[PaletteCommand] = &[
         shortcut: "Ctrl+Shift+T",
         mac_shortcut: "Cmd+T",
         action: || Box::new(NewTerminal),
+    },
+    PaletteCommand {
+        label: "New Browser",
+        shortcut: "Ctrl+Shift+O",
+        mac_shortcut: "Cmd+Shift+O",
+        action: || Box::new(NewBrowser),
     },
     PaletteCommand {
         label: "Close Terminal",

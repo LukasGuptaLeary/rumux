@@ -8,16 +8,19 @@ use crate::command_palette::{CommandPalette, PaletteEvent};
 use crate::find_bar::FindBar;
 use crate::notification_panel::NotificationPanel;
 use crate::sidebar::WorkspaceSidebar;
+use crate::ssh_dialog::{DismissSshDialog, SshDialog};
 use crate::theme;
 
 actions!(
     rumux,
     [
         NewWorkspace,
+        ConnectSsh,
         CloseWorkspace,
         SplitRight,
         SplitDown,
         NewTerminal,
+        NewBrowser,
         CloseTerminal,
         NextWorkspace,
         PrevWorkspace,
@@ -38,29 +41,46 @@ pub struct RootView {
     app_state: Entity<AppState>,
     sidebar: Entity<WorkspaceSidebar>,
     command_palette: Option<Entity<CommandPalette>>,
+    ssh_dialog: Option<Entity<SshDialog>>,
     notification_panel: Option<Entity<NotificationPanel>>,
     find_bar: Option<Entity<FindBar>>,
     sidebar_visible: bool,
+    find_workspace: Option<EntityId>,
+    _state_subscription: Subscription,
     pub focus_handle: FocusHandle,
 }
 
 impl RootView {
     pub fn new(app_state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar_visible = app_state.read(cx).config.sidebar_visible;
-        let sidebar = cx.new(|_cx| WorkspaceSidebar::new(app_state.clone()));
+        let sidebar = cx.new(|cx| WorkspaceSidebar::new(app_state.clone(), cx));
 
         // Initialize workspaces now that we have window access
         app_state.update(cx, |state, cx| {
             state.init_workspaces(window, cx);
         });
 
+        let state_subscription = cx.observe(&app_state, |root: &mut Self, state, cx| {
+            let current = state.read(cx).active_workspace().entity_id();
+            if root.find_workspace.is_some_and(|id| id != current) {
+                if let Some(bar) = root.find_bar.take() {
+                    bar.update(cx, |bar, cx| bar.clear(cx));
+                }
+                root.find_workspace = None;
+            }
+            cx.notify();
+        });
+
         Self {
             app_state,
             sidebar,
             command_palette: None,
+            ssh_dialog: None,
             notification_panel: None,
             find_bar: None,
             sidebar_visible,
+            find_workspace: None,
+            _state_subscription: state_subscription,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -69,6 +89,17 @@ impl RootView {
 impl Render for RootView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_ws = self.app_state.read(cx).active_workspace().clone();
+        let workspaces = self.app_state.read(cx).workspaces.clone();
+        let browser_visible = self.command_palette.is_none()
+            && self.ssh_dialog.is_none()
+            && self.notification_panel.is_none()
+            && self.find_bar.is_none();
+        for workspace in workspaces {
+            let visible = browser_visible && workspace.entity_id() == active_ws.entity_id();
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_browsers_visible(visible, cx)
+            });
+        }
 
         let mut container = div()
             .size_full()
@@ -82,6 +113,16 @@ impl Render for RootView {
             .on_action(cx.listener(|root, _: &NewWorkspace, window, cx| {
                 root.app_state
                     .update(cx, |state, cx| state.add_workspace(window, cx));
+            }))
+            .on_action(cx.listener(|root, _: &ConnectSsh, window, cx| {
+                let dialog = cx.new(|cx| SshDialog::new(root.app_state.clone(), window, cx));
+                cx.subscribe(&dialog, |root, _, _: &DismissSshDialog, cx| {
+                    root.ssh_dialog = None;
+                    cx.notify();
+                })
+                .detach();
+                root.ssh_dialog = Some(dialog);
+                cx.notify();
             }))
             .on_action(cx.listener(|root, _: &CloseWorkspace, _window, cx| {
                 let idx = root.app_state.read(cx).active_workspace_idx;
@@ -104,6 +145,17 @@ impl Render for RootView {
                 let ws = root.app_state.read(cx).active_workspace().clone();
                 ws.update(cx, |ws, cx| {
                     ws.add_terminal(window, cx);
+                });
+            }))
+            .on_action(cx.listener(|root, _: &NewBrowser, window, cx| {
+                let workspace = root.app_state.read(cx).active_workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.add_browser(
+                        "about:blank".into(),
+                        Some(gpui_component::Placement::Right),
+                        window,
+                        cx,
+                    );
                 });
             }))
             .on_action(cx.listener(|root, _: &CloseTerminal, window, cx| {
@@ -195,25 +247,30 @@ impl Render for RootView {
                 cx.notify();
             }))
             .on_action(cx.listener(|root, _: &JumpToUnread, window, cx| {
-                let unread_workspace = {
-                    let state = root.app_state.read(cx);
-                    state
-                        .workspaces
-                        .iter()
-                        .position(|ws| ws.read(cx).unread_count > 0)
-                };
-                if let Some(i) = unread_workspace {
-                    root.app_state
-                        .update(cx, |state, cx| state.set_active_workspace(i, window, cx));
-                }
+                root.app_state
+                    .update(cx, |state, cx| state.jump_to_unread(window, cx));
             }))
             .on_action(cx.listener(|root, _: &ToggleFindBar, window, cx| {
                 if root.find_bar.is_some() {
-                    root.find_bar = None;
-                    root.focus_handle.focus(window);
+                    if let Some(bar) = root.find_bar.take() {
+                        bar.update(cx, |bar, cx| bar.clear(cx));
+                    }
+                    root.find_workspace = None;
+                    root.app_state
+                        .update(cx, |state, cx| state.focus_active_workspace(window, cx));
                 } else {
-                    let bar = cx.new(|cx| FindBar::new(window, cx));
-                    root.find_bar = Some(bar);
+                    let terminal = root
+                        .app_state
+                        .read(cx)
+                        .active_workspace()
+                        .read(cx)
+                        .target_terminal(cx);
+                    if let Some(terminal) = terminal {
+                        let bar = cx.new(|cx| FindBar::new(terminal, window, cx));
+                        root.find_bar = Some(bar);
+                        root.find_workspace =
+                            Some(root.app_state.read(cx).active_workspace().entity_id());
+                    }
                 }
                 cx.notify();
             }));
@@ -258,6 +315,9 @@ impl Render for RootView {
         }
         if let Some(bar) = &self.find_bar {
             container = container.child(bar.clone());
+        }
+        if let Some(dialog) = &self.ssh_dialog {
+            container = container.child(dialog.clone());
         }
 
         container

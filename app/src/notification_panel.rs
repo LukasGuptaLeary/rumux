@@ -40,6 +40,8 @@ impl Render for NotificationPanel {
         } else {
             for notif in &notifications {
                 let mut entry = div()
+                    .id(SharedString::from(notif.id.clone()))
+                    .cursor_pointer()
                     .px(px(16.0))
                     .py(px(10.0))
                     .border_b_1()
@@ -87,7 +89,14 @@ impl Render for NotificationPanel {
                             .child(notif.body.clone()),
                     );
 
-                list = list.child(entry);
+                let app_state = self.app_state.clone();
+                let id = notif.id.clone();
+                list = list.child(entry.on_click(move |_event, window, cx| {
+                    app_state.update(cx, |state, cx| {
+                        state.open_notification(&id, window, cx);
+                    });
+                    window.dispatch_action(Box::new(ToggleNotificationPanel), cx);
+                }));
             }
         }
 
@@ -132,8 +141,7 @@ impl Render for NotificationPanel {
                                 let app_state = self.app_state.clone();
                                 cx.listener(move |_panel, _event, _window, cx| {
                                     app_state.update(cx, |state: &mut AppState, cx| {
-                                        state.notifications.clear();
-                                        cx.notify();
+                                        state.clear_notifications(cx);
                                     });
                                 })
                             }),

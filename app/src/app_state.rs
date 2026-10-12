@@ -14,6 +14,7 @@ pub struct AppState {
     pub default_cwd: std::path::PathBuf,
     primary_window: Option<AnyWindowHandle>,
     workspace_subscriptions: Vec<Subscription>,
+    session_writable: bool,
 }
 
 impl AppState {
@@ -30,11 +31,20 @@ impl AppState {
             default_cwd,
             primary_window: None,
             workspace_subscriptions: Vec::new(),
+            session_writable: true,
         }
     }
 
     pub fn init_workspaces(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Ok(Some(session_data)) = session::load_session() {
+        let loaded = match session::load_session() {
+            Ok(data) => data,
+            Err(error) => {
+                eprintln!("Unable to restore session: {error:#}. Session file will be preserved.");
+                self.session_writable = false;
+                None
+            }
+        };
+        if let Some(session_data) = loaded {
             for ws_session in session_data.workspaces {
                 let ws = self.restore_workspace(ws_session, window, cx);
                 self.workspaces.push(ws);
@@ -83,11 +93,28 @@ impl AppState {
     }
 
     pub fn close_workspace(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspaces.len() <= 1 {
+        if self.workspaces.len() <= 1 || idx >= self.workspaces.len() {
             return;
         }
 
+        for surface in self.workspaces[idx].read(cx).list_surfaces(cx) {
+            if surface.kind == "terminal"
+                && let Ok(id) = uuid::Uuid::parse_str(&surface.id)
+            {
+                crate::terminal_surface::close_owned(id, cx);
+            }
+        }
         self.workspaces.remove(idx);
+        self.notifications
+            .retain(|notification| notification.workspace_id != idx);
+        for notification in &mut self.notifications {
+            if notification.workspace_id > idx {
+                notification.workspace_id -= 1;
+            }
+        }
+        if self.active_workspace_idx > idx {
+            self.active_workspace_idx -= 1;
+        }
         if self.active_workspace_idx >= self.workspaces.len() {
             self.active_workspace_idx = self.workspaces.len() - 1;
         }
@@ -117,6 +144,13 @@ impl AppState {
             workspace.to_session(cx)
         };
         snapshot.name = format!("{} (copy)", snapshot.name);
+        snapshot.id = None;
+        if let Some(connection) = &mut snapshot.ssh {
+            connection.forwards.clear();
+        }
+        if let Some(dock) = &mut snapshot.dock_area {
+            clear_panel_ids(&mut dock.center);
+        }
 
         let ws = self.restore_workspace(snapshot, window, cx);
         self.workspaces.push(ws);
@@ -142,13 +176,18 @@ impl AppState {
     }
 
     pub fn save_session(&self, cx: &App) {
+        if !self.session_writable {
+            return;
+        }
         let workspaces = self
             .workspaces
             .iter()
             .map(|ws| ws.read(cx).to_session(cx))
             .collect();
         let data = session::SessionData::new(workspaces, self.active_workspace_idx);
-        let _ = session::save_session(&data);
+        if let Err(error) = session::save_session(&data) {
+            eprintln!("Unable to save session: {error:#}");
+        }
     }
 
     pub fn workspace_summaries(&self, cx: &App) -> Vec<WorkspaceSummary> {
@@ -186,17 +225,43 @@ impl AppState {
         self.focus_active_workspace(window, cx);
     }
 
-    pub fn create_notification(
+    pub fn add_ssh_workspace(
+        &mut self,
+        name: Option<String>,
+        connection: rumux_core::ssh::SshConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| format!("SSH {}", connection.destination()));
+        let color = Self::workspace_color(self.workspaces.len());
+        let workspace = cx.new(|cx| {
+            let mut workspace = Workspace::new_ssh(name, connection, window, cx);
+            workspace.color = Some(color);
+            workspace
+        });
+        self.track_workspace(&workspace, cx);
+        self.workspaces.push(workspace);
+        self.active_workspace_idx = self.workspaces.len() - 1;
+        self.save_session(cx);
+        cx.notify();
+        self.focus_active_workspace(window, cx);
+    }
+
+    pub fn create_notification_at(
         &mut self,
         title: String,
         subtitle: Option<String>,
         body: String,
         workspace_id: usize,
+        surface_index: Option<usize>,
         cx: &mut Context<Self>,
     ) -> Notification {
         let notification = Notification {
             id: uuid::Uuid::new_v4().to_string(),
             workspace_id,
+            surface_index,
             title,
             subtitle,
             body,
@@ -208,12 +273,22 @@ impl AppState {
         };
 
         self.notifications.push(notification.clone());
-
-        if let Some(workspace) = self.workspaces.get(workspace_id) {
-            workspace.update(cx, |workspace, cx| {
-                workspace.unread_count += 1;
-                cx.notify();
-            });
+        if self.notifications.len() > 1_000 {
+            self.notifications.remove(0);
+        }
+        self.refresh_unread_counts(cx);
+        if self.config.desktop_notifications {
+            let title = notification.title.clone();
+            let body = notification.body.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    let _ = notify_rust::Notification::new()
+                        .summary(&title)
+                        .body(&body)
+                        .appname("rumux")
+                        .show();
+                })
+                .detach();
         }
 
         cx.notify();
@@ -222,13 +297,64 @@ impl AppState {
 
     pub fn clear_notifications(&mut self, cx: &mut Context<Self>) {
         self.notifications.clear();
-        for workspace in &self.workspaces {
+        self.refresh_unread_counts(cx);
+        cx.notify();
+    }
+
+    fn refresh_unread_counts(&mut self, cx: &mut Context<Self>) {
+        for (index, workspace) in self.workspaces.iter().enumerate() {
+            let pending: Vec<_> = self
+                .notifications
+                .iter()
+                .filter(|n| n.workspace_id == index && !n.read)
+                .collect();
             workspace.update(cx, |workspace, cx| {
-                workspace.unread_count = 0;
+                workspace.unread_count = pending.len();
+                workspace.set_unread_surfaces(
+                    pending.iter().filter_map(|n| n.surface_index).collect(),
+                    cx,
+                );
                 cx.notify();
             });
         }
+    }
+
+    pub fn open_notification(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(notification) = self.notifications.iter_mut().find(|n| n.id == id) else {
+            return false;
+        };
+        notification.read = true;
+        let workspace_index = notification.workspace_id;
+        let surface_index = notification.surface_index;
+        self.refresh_unread_counts(cx);
+        if workspace_index >= self.workspaces.len() {
+            return false;
+        }
+        self.set_active_workspace(workspace_index, window, cx);
+        self.workspaces[workspace_index]
+            .clone()
+            .update(cx, |workspace, cx| {
+                workspace.focus_surface(surface_index, window, cx);
+            });
         cx.notify();
+        true
+    }
+
+    pub fn jump_to_unread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self
+            .notifications
+            .iter()
+            .rev()
+            .find(|n| !n.read)
+            .map(|n| n.id.clone())
+        {
+            self.open_notification(&id, window, cx);
+        }
     }
 
     pub fn set_primary_window(&mut self, window: AnyWindowHandle) {
@@ -291,8 +417,28 @@ impl AppState {
     fn track_workspace(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
         let subscription = cx.subscribe(
             workspace,
-            |state, _workspace, event: &WorkspaceEvent, cx| match event {
+            |state, workspace, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::PersistRequested => state.save_session(cx),
+                WorkspaceEvent::Notification {
+                    surface_index,
+                    title,
+                    body,
+                } => {
+                    if let Some(index) = state
+                        .workspaces
+                        .iter()
+                        .position(|ws| ws.entity_id() == workspace.entity_id())
+                    {
+                        state.create_notification_at(
+                            title.clone(),
+                            None,
+                            body.clone(),
+                            index,
+                            Some(*surface_index),
+                            cx,
+                        );
+                    }
+                }
             },
         );
         self.workspace_subscriptions.push(subscription);
@@ -304,5 +450,21 @@ impl AppState {
 
     fn workspace_color(index: usize) -> u32 {
         theme::WORKSPACE_COLORS[index % theme::WORKSPACE_COLORS.len()]
+    }
+}
+
+fn clear_panel_ids(panel: &mut gpui_component::dock::PanelState) {
+    if matches!(panel.panel_name.as_str(), "TerminalPanel" | "BrowserPanel") {
+        if let gpui_component::dock::PanelInfo::Panel(value) = &mut panel.info {
+            if let Some(info) = value.as_object_mut() {
+                info.remove("id");
+                if let Some(ssh) = info.get_mut("ssh").filter(|ssh| ssh.is_object()) {
+                    ssh["forwards"] = serde_json::json!([]);
+                }
+            }
+        }
+    }
+    for child in &mut panel.children {
+        clear_panel_ids(child);
     }
 }

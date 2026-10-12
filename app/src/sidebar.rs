@@ -8,7 +8,7 @@ use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
 
 use crate::app_state::AppState;
 use crate::root_view::{
-    DuplicateWorkspace, ToggleCommandPalette, ToggleNotificationPanel, ToggleSidebar,
+    DuplicateWorkspace, NewBrowser, ToggleCommandPalette, ToggleNotificationPanel, ToggleSidebar,
 };
 use crate::theme;
 
@@ -17,15 +17,46 @@ pub struct WorkspaceSidebar {
     rename_idx: Option<usize>,
     rename_editor: Option<Entity<InputState>>,
     _rename_sub: Option<gpui::Subscription>,
+    _state_subscription: Subscription,
+    workspace_subscriptions: Vec<(EntityId, Subscription)>,
 }
 
 impl WorkspaceSidebar {
-    pub fn new(app_state: Entity<AppState>) -> Self {
-        Self {
+    pub fn new(app_state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
+        let subscription = cx.observe(&app_state, |sidebar, _, cx| {
+            sidebar.observe_workspaces(cx);
+            cx.notify();
+        });
+        let mut sidebar = Self {
             app_state,
             rename_idx: None,
             rename_editor: None,
             _rename_sub: None,
+            _state_subscription: subscription,
+            workspace_subscriptions: Vec::new(),
+        };
+        sidebar.observe_workspaces(cx);
+        sidebar
+    }
+
+    fn observe_workspaces(&mut self, cx: &mut Context<Self>) {
+        let workspaces = self.app_state.read(cx).workspaces.clone();
+        self.workspace_subscriptions.retain(|(id, _)| {
+            workspaces
+                .iter()
+                .any(|workspace| workspace.entity_id() == *id)
+        });
+        for workspace in workspaces {
+            let id = workspace.entity_id();
+            if self
+                .workspace_subscriptions
+                .iter()
+                .any(|(tracked, _)| *tracked == id)
+            {
+                continue;
+            }
+            let subscription = cx.observe(&workspace, |_, _, cx| cx.notify());
+            self.workspace_subscriptions.push((id, subscription));
         }
     }
 
@@ -104,6 +135,7 @@ impl Render for WorkspaceSidebar {
             let unread = ws.unread_count;
             let ws_color = ws.color.unwrap_or(theme::ACCENT);
             let git_branch = ws.git_branch.clone();
+            let activity = ws.activity_status(cx);
             let is_renaming = self.rename_idx == Some(i);
 
             let mut tab = div()
@@ -196,13 +228,27 @@ impl Render for WorkspaceSidebar {
             };
 
             tab = tab.child(content);
+            if activity != rumux_core::status::SurfaceStatus::Idle {
+                tab = tab.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(
+                            if activity == rumux_core::status::SurfaceStatus::Blocked {
+                                theme::ACCENT
+                            } else {
+                                theme::TEXT_DIM
+                            },
+                        ))
+                        .child(activity.label()),
+                );
+            }
 
             if let Some(ref branch) = git_branch {
                 tab = tab.child(
                     div()
                         .text_size(px(11.0))
                         .text_color(rgb(theme::TEXT_DIM))
-                        .overflow_hidden()
+                        .truncate()
                         .child(branch.clone()),
                 );
             }
@@ -284,6 +330,16 @@ impl Render for WorkspaceSidebar {
                         div()
                             .flex()
                             .gap(px(2.0))
+                            .child(
+                                Button::new("sidebar-browser")
+                                    .ghost()
+                                    .compact()
+                                    .icon(IconName::Globe)
+                                    .tooltip("New Browser")
+                                    .on_click(cx.listener(|_, _, window, cx| {
+                                        window.dispatch_action(Box::new(NewBrowser), cx)
+                                    })),
+                            )
                             .child(
                                 Button::new("sidebar-btn-2")
                                     .ghost()

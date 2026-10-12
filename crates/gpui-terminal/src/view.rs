@@ -53,6 +53,7 @@ use crate::input::keystroke_to_bytes;
 use crate::render::TerminalRenderer;
 use crate::terminal::TerminalState;
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
 use alacritty_terminal::selection::{
     Selection as TerminalSelection, SelectionRange, SelectionType as TerminalSelectionType,
@@ -400,9 +401,11 @@ pub struct TerminalView {
     /// Async task that reads bytes and notifies the view (push-based)
     #[allow(dead_code)]
     _reader_task: Task<()>,
+    mirrored: bool,
 
     /// Callback to notify the PTY about size changes
     resize_callback: Option<Arc<ResizeCallback>>,
+    pixel_resize_callback: Option<Arc<dyn Fn(usize, usize, u16, u16) + Send + Sync>>,
 
     /// Optional callback to intercept key events before terminal processing
     key_handler: Option<Arc<KeyHandler>>,
@@ -426,7 +429,29 @@ pub struct TerminalView {
     selecting: bool,
     /// Shared cell metrics updated by the canvas paint callback
     cell_metrics: Arc<parking_lot::Mutex<CellMetrics>>,
+    scroll_remainder: f32,
+    pending_events: Vec<TerminalEvent>,
+    close_callback: Option<Box<dyn FnOnce()>>,
+    search_query: String,
+    search_matches: Vec<alacritty_terminal::term::search::Match>,
+    search_active: Option<usize>,
 }
+
+/// Output events are delivered on the UI executor, including for hidden tabs.
+#[derive(Clone, Debug)]
+pub enum TerminalViewEvent {
+    Output(Vec<u8>),
+    Metadata(serde_json::Value),
+    Disconnected,
+    Exited,
+}
+
+enum ViewFrame {
+    Bytes(Vec<u8>),
+    Mirror(crate::mirror::MirrorUpdate),
+}
+
+impl EventEmitter<TerminalViewEvent> for TerminalView {}
 
 #[derive(Clone)]
 struct CellMetrics {
@@ -471,6 +496,42 @@ impl TerminalView {
         W: Write + Send + 'static,
         R: Read + Send + 'static,
     {
+        let (frames_tx, frames_rx) = flume::bounded(64);
+        thread::spawn(move || Self::read_stdout_blocking(stdout_reader, frames_tx));
+        Self::from_frames(stdin_writer, config, frames_rx, false, cx)
+    }
+
+    /// Attach a read-only render mirror; terminal parsing and replies belong to the service.
+    pub fn new_mirror<W>(
+        stdin_writer: W,
+        updates: std::sync::mpsc::Receiver<crate::mirror::MirrorUpdate>,
+        config: TerminalConfig,
+        cx: &mut Context<Self>,
+    ) -> Self
+    where
+        W: Write + Send + 'static,
+    {
+        let (frames_tx, frames_rx) = flume::bounded(2);
+        thread::spawn(move || {
+            while let Ok(update) = updates.recv() {
+                if frames_tx.send(ViewFrame::Mirror(update)).is_err() {
+                    break;
+                }
+            }
+        });
+        Self::from_frames(stdin_writer, config, frames_rx, true, cx)
+    }
+
+    fn from_frames<W>(
+        stdin_writer: W,
+        config: TerminalConfig,
+        frames_rx: flume::Receiver<ViewFrame>,
+        mirrored: bool,
+        cx: &mut Context<Self>,
+    ) -> Self
+    where
+        W: Write + Send + 'static,
+    {
         // Create event channel for terminal events
         let (event_tx, event_rx) = mpsc::channel();
 
@@ -481,7 +542,12 @@ impl TerminalView {
         let event_proxy = GpuiEventProxy::new(event_tx);
 
         // Create terminal state
-        let state = TerminalState::new(config.cols, config.rows, event_proxy);
+        let state = TerminalState::with_scrollback(
+            config.cols,
+            config.rows,
+            config.scrollback,
+            event_proxy,
+        );
 
         // Create renderer with font settings and color palette
         let renderer = TerminalRenderer::new(
@@ -499,30 +565,48 @@ impl TerminalView {
             Box::new(stdin_writer) as Box<dyn Write + Send>
         ));
 
-        // Create async channel for bytes (push-based notification)
-        // Using flume instead of smol::channel because flume is executor-agnostic
-        // and properly wakes GPUI's async executor when data arrives
-        let (bytes_tx, bytes_rx) = flume::unbounded::<Vec<u8>>();
-
-        // Spawn background thread to read from stdout
-        // This thread sends bytes through the async channel
-        thread::spawn(move || {
-            Self::read_stdout_blocking(stdout_reader, bytes_tx);
-        });
-
         // Spawn async task that awaits on the channel and notifies the view
         // This is push-based: the task blocks until bytes arrive, then immediately notifies
         let reader_task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             loop {
                 // Wait for bytes from the background reader (blocks until data arrives)
-                match bytes_rx.recv_async().await {
-                    Ok(bytes) => {
+                match frames_rx.recv_async().await {
+                    Ok(frame) => {
                         // Process bytes, invoke output callback, and notify the view
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                            if let Some(ref cb) = view.output_callback {
-                                cb(&bytes);
+                            match frame {
+                                ViewFrame::Bytes(bytes) => {
+                                    if let Some(ref cb) = view.output_callback {
+                                        cb(&bytes);
+                                    }
+                                    view.state.process_bytes(&bytes);
+                                    view.reply_to_terminal_queries();
+                                    cx.emit(TerminalViewEvent::Output(bytes));
+                                }
+                                ViewFrame::Mirror(update) => {
+                                    if let Err(error) = update.packet.apply(&mut view.state) {
+                                        eprintln!("Unable to apply terminal snapshot: {error:#}");
+                                        return;
+                                    }
+                                    cx.emit(TerminalViewEvent::Metadata(update.metadata));
+                                    if update.bell && view.pending_events.len() < 256 {
+                                        view.pending_events.push(TerminalEvent::Bell);
+                                    }
+                                    for text in update.clipboard.into_iter().take(16) {
+                                        if view.pending_events.len() >= 256 {
+                                            break;
+                                        }
+                                        view.pending_events
+                                            .push(TerminalEvent::ClipboardStore(text));
+                                    }
+                                    if update.exited {
+                                        cx.emit(TerminalViewEvent::Exited);
+                                    }
+                                }
                             }
-                            view.state.process_bytes(&bytes);
+                            if !view.search_query.is_empty() {
+                                view.refresh_search();
+                            }
                             cx.notify();
                         });
                         if result.is_err() {
@@ -532,9 +616,16 @@ impl TerminalView {
                     }
                     Err(_) => {
                         // Channel closed - PTY has finished, send Exit event
-                        let _ = exit_event_tx.send(TerminalEvent::Exit);
+                        if !mirrored {
+                            let _ = exit_event_tx.send(TerminalEvent::Exit);
+                        }
                         // Notify view to process the Exit event
                         let _ = this.update(cx, |_view, cx: &mut Context<Self>| {
+                            if !mirrored {
+                                cx.emit(TerminalViewEvent::Exited);
+                            } else {
+                                cx.emit(TerminalViewEvent::Disconnected);
+                            }
                             cx.notify();
                         });
                         break;
@@ -551,7 +642,9 @@ impl TerminalView {
             event_rx,
             config,
             _reader_task: reader_task,
+            mirrored,
             resize_callback: None,
+            pixel_resize_callback: None,
             key_handler: None,
             bell_callback: None,
             title_callback: None,
@@ -564,6 +657,12 @@ impl TerminalView {
                 cell_width: px(8.0),
                 cell_height: px(16.0),
             })),
+            scroll_remainder: 0.0,
+            pending_events: Vec::new(),
+            close_callback: None,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_active: None,
         }
     }
 
@@ -586,6 +685,8 @@ impl TerminalView {
         };
 
         self.clear_selection();
+        self.state
+            .with_term_mut(|term| term.scroll_display(Scroll::Bottom));
         self.write_to_pty(&bytes);
         true
     }
@@ -617,8 +718,9 @@ impl TerminalView {
 
             let grid = term.grid();
             let last_visible_line = term.screen_lines().saturating_sub(1) as i32;
-            let first_line = range.start.line.0.max(0);
-            let last_line = range.end.line.0.min(last_visible_line);
+            let offset = grid.display_offset() as i32;
+            let first_line = range.start.line.0.max(-offset);
+            let last_line = range.end.line.0.min(last_visible_line - offset);
 
             for line_idx in first_line..=last_line {
                 let line = Line(line_idx);
@@ -692,6 +794,8 @@ impl TerminalView {
         }
 
         self.clear_selection();
+        self.state
+            .with_term_mut(|term| term.scroll_display(Scroll::Bottom));
         let bytes = self.paste_bytes(&text);
         self.write_to_pty(&bytes);
     }
@@ -751,10 +855,54 @@ impl TerminalView {
     pub fn visible_text(&self) -> String {
         self.state.with_term(|term| {
             let last_line = term.screen_lines().saturating_sub(1) as i32;
-            let start = AlacPoint::new(Line(0), Column(0));
-            let end = AlacPoint::new(Line(last_line.max(0)), term.last_column());
+            let offset = term.grid().display_offset() as i32;
+            let start = AlacPoint::new(Line(-offset), Column(0));
+            let end = AlacPoint::new(Line(last_line.max(0) - offset), term.last_column());
             term.bounds_to_string(start, end)
         })
+    }
+
+    fn refresh_search(&mut self) {
+        self.search_matches = self
+            .state
+            .with_term(|term| crate::search::find_matches(term, &self.search_query));
+        self.search_active = self
+            .search_active
+            .filter(|index| *index < self.search_matches.len());
+    }
+
+    pub fn search_status(&self) -> (usize, Option<usize>) {
+        (self.search_matches.len(), self.search_active)
+    }
+
+    /// Search literal text with smart case; advance by -1/0/1 and wrap.
+    pub fn find(
+        &mut self,
+        query: &str,
+        advance: i32,
+        cx: &mut Context<Self>,
+    ) -> (usize, Option<usize>) {
+        let changed = self.search_query != query;
+        self.search_query = query.to_string();
+        self.refresh_search();
+        let count = self.search_matches.len();
+        self.search_active = if count == 0 {
+            None
+        } else if changed || self.search_active.is_none() {
+            Some(count - 1)
+        } else {
+            Some(
+                (self.search_active.unwrap_or_default() as i64 + advance as i64)
+                    .rem_euclid(count as i64) as usize,
+            )
+        };
+        if let Some(index) = self.search_active {
+            let range = self.search_matches[index].clone();
+            self.state
+                .with_term_mut(|term| term.scroll_to_point(*range.start()));
+        }
+        cx.notify();
+        (count, self.search_active)
     }
 
     fn is_copy_shortcut(keystroke: &Keystroke) -> bool {
@@ -826,6 +974,15 @@ impl TerminalView {
         callback: impl Fn(usize, usize) + Send + Sync + 'static,
     ) -> Self {
         self.resize_callback = Some(Arc::new(Box::new(callback)));
+        self
+    }
+
+    /// Report measured cell size for terminal window-size protocol replies.
+    pub fn with_pixel_resize_callback(
+        mut self,
+        callback: impl Fn(usize, usize, u16, u16) + Send + Sync + 'static,
+    ) -> Self {
+        self.pixel_resize_callback = Some(Arc::new(callback));
         self
     }
 
@@ -967,6 +1124,12 @@ impl TerminalView {
         self
     }
 
+    /// Release the process owned by this view when its pane is closed.
+    pub fn with_close_callback(mut self, callback: impl FnOnce() + 'static) -> Self {
+        self.close_callback = Some(Box::new(callback));
+        self
+    }
+
     /// Background thread that reads from stdout.
     ///
     /// This function runs in a background thread, continuously reading bytes
@@ -975,7 +1138,7 @@ impl TerminalView {
     /// when data arrives (push-based).
     fn read_stdout_blocking<R: Read + Send + 'static>(
         mut stdout_reader: R,
-        bytes_tx: flume::Sender<Vec<u8>>,
+        bytes_tx: flume::Sender<ViewFrame>,
     ) {
         let mut buffer = [0u8; 4096];
 
@@ -988,7 +1151,7 @@ impl TerminalView {
                 Ok(n) => {
                     // Send bytes to the async task
                     let bytes = buffer[..n].to_vec();
-                    if bytes_tx.send(bytes).is_err() {
+                    if bytes_tx.send(ViewFrame::Bytes(bytes)).is_err() {
                         break; // Channel closed
                     }
                 }
@@ -1027,6 +1190,8 @@ impl TerminalView {
 
         if let Some(bytes) = keystroke_to_bytes(&event.keystroke, self.state.mode()) {
             self.clear_selection();
+            self.state
+                .with_term_mut(|term| term.scroll_display(Scroll::Bottom));
             let mut writer = self.stdin_writer.lock();
             let _ = writer.write_all(&bytes);
             let _ = writer.flush();
@@ -1060,7 +1225,8 @@ impl TerminalView {
             Side::Right
         };
 
-        (AlacPoint::new(Line(row), Column(col)), side)
+        let offset = self.state.with_term(|term| term.grid().display_offset()) as i32;
+        (AlacPoint::new(Line(row - offset), Column(col)), side)
     }
 
     fn on_mouse_down(
@@ -1158,16 +1324,94 @@ impl TerminalView {
 
     /// Handle scroll events.
     ///
-    /// Currently a placeholder for future scrollback support.
     fn on_scroll(
         &mut self,
-        _event: &ScrollWheelEvent,
+        event: &ScrollWheelEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        // TODO: Implement scrollback
-        // - Scroll the terminal display up/down
-        // - Send scroll reports if alternate screen is not active
+        let cell_height = self.cell_metrics.lock().cell_height;
+        let delta = event.delta.pixel_delta(cell_height).y / cell_height;
+        if self.scroll_remainder.signum() != delta.signum() {
+            self.scroll_remainder = 0.0;
+        }
+        self.scroll_remainder += delta;
+        let lines = self.scroll_remainder.trunc() as i32;
+        self.scroll_remainder -= lines as f32;
+        if lines == 0 {
+            return;
+        }
+        let mode = self.state.mode();
+        let mods = crate::mouse::encode_modifiers(
+            event.modifiers.shift,
+            event.modifiers.alt,
+            event.modifiers.control,
+        );
+        if !event.modifiers.shift {
+            if let Some(bytes) =
+                crate::mouse::scroll_report(lines, self.pixel_to_cell(event.position), mods, mode)
+            {
+                self.write_to_pty(&bytes);
+                cx.stop_propagation();
+                return;
+            }
+        }
+        self.state
+            .with_term_mut(|term| term.scroll_display(Scroll::Delta(lines)));
+        cx.notify();
+        cx.stop_propagation();
+    }
+
+    fn reply_to_terminal_queries(&mut self) {
+        while let Ok(event) = self.event_rx.try_recv() {
+            match event {
+                TerminalEvent::PtyWrite(bytes) => self.write_to_pty(bytes.as_bytes()),
+                // A terminal-originated read must never paste into the shell.
+                TerminalEvent::ClipboardLoad => {}
+                TerminalEvent::Wakeup => {}
+                TerminalEvent::Query(query) => {
+                    let reply = match &*query {
+                        alacritty_terminal::event::Event::ColorRequest(index, format) => {
+                            use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
+                            let color = match *index {
+                                0..=255 => Color::Indexed(*index as u8),
+                                257 => Color::Named(NamedColor::Background),
+                                258 => Color::Named(NamedColor::Cursor),
+                                _ => Color::Named(NamedColor::Foreground),
+                            };
+                            let rgb = self.state.with_term(|term| {
+                                self.config.colors.resolve(color, term.colors()).to_rgb()
+                            });
+                            format(Rgb {
+                                r: (rgb.r * 255.0).round() as u8,
+                                g: (rgb.g * 255.0).round() as u8,
+                                b: (rgb.b * 255.0).round() as u8,
+                            })
+                        }
+                        alacritty_terminal::event::Event::TextAreaSizeRequest(format) => {
+                            let metrics = self.cell_metrics.lock();
+                            let (cols, rows) = self
+                                .state
+                                .with_term(|term| (term.columns(), term.screen_lines()));
+                            format(alacritty_terminal::event::WindowSize {
+                                num_lines: rows.min(u16::MAX as usize) as u16,
+                                num_cols: cols.min(u16::MAX as usize) as u16,
+                                cell_width: f32::from(metrics.cell_width).round() as u16,
+                                cell_height: f32::from(metrics.cell_height).round() as u16,
+                            })
+                        }
+                        alacritty_terminal::event::Event::ClipboardLoad(_, format) => format(""),
+                        _ => String::new(),
+                    };
+                    self.write_to_pty(reply.as_bytes());
+                }
+                event => {
+                    if self.pending_events.len() < 256 {
+                        self.pending_events.push(event);
+                    }
+                }
+            }
+        }
     }
 
     /// Process pending terminal events.
@@ -1177,7 +1421,8 @@ impl TerminalView {
     /// async reader task, not here.
     fn process_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Process terminal events (from alacritty event proxy)
-        while let Ok(event) = self.event_rx.try_recv() {
+        self.reply_to_terminal_queries();
+        for event in std::mem::take(&mut self.pending_events) {
             match event {
                 TerminalEvent::Wakeup => {
                     // Terminal has new content - already handled by async task
@@ -1198,8 +1443,10 @@ impl TerminalView {
                     }
                 }
                 TerminalEvent::ClipboardLoad => {
-                    self.paste_from_clipboard(cx);
+                    // Terminal-originated clipboard reads are disabled.
                 }
+                TerminalEvent::PtyWrite(bytes) => self.write_to_pty(bytes.as_bytes()),
+                TerminalEvent::Query(_) => {}
                 TerminalEvent::Exit => {
                     if let Some(ref callback) = self.exit_callback {
                         callback(window, cx);
@@ -1288,6 +1535,14 @@ impl TerminalView {
     }
 }
 
+impl Drop for TerminalView {
+    fn drop(&mut self) {
+        if let Some(callback) = self.close_callback.take() {
+            callback();
+        }
+    }
+}
+
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Process any pending events
@@ -1297,8 +1552,12 @@ impl Render for TerminalView {
         let state_arc = self.state.term_arc();
         let renderer = self.renderer.clone();
         let resize_callback = self.resize_callback.clone();
+        let pixel_resize_callback = self.pixel_resize_callback.clone();
         let padding = self.config.padding;
         let metrics_for_canvas = self.cell_metrics.clone();
+        let search_matches = self.search_matches.clone();
+        let search_active = self.search_active;
+        let mirrored = self.mirrored;
 
         let bg = self.renderer.palette.resolve(
             alacritty_terminal::vte::ansi::Color::Named(
@@ -1334,8 +1593,12 @@ impl Render for TerminalView {
                         let cell_width_f32: f32 = measured_renderer.cell_width.into();
                         let cell_height_f32: f32 = measured_renderer.cell_height.into();
 
-                        let cols = ((available_width / cell_width_f32) as usize).max(1);
-                        let rows = ((available_height / cell_height_f32) as usize).max(1);
+                        let mut cols = ((available_width / cell_width_f32) as usize).max(2);
+                        let mut rows = ((available_height / cell_height_f32) as usize).max(1);
+                        if mirrored {
+                            cols = cols.min(crate::mirror::MAX_COLUMNS);
+                            rows = rows.min(crate::mirror::MAX_ROWS);
+                        }
 
                         // Helper struct implementing Dimensions for resize
                         struct TermSize {
@@ -1367,12 +1630,29 @@ impl Render for TerminalView {
                         let mut term = state_arc.lock();
                         let current_cols = term.columns();
                         let current_rows = term.screen_lines();
+                        let metrics_changed = {
+                            let metrics = metrics_for_canvas.lock();
+                            metrics.cell_width != measured_renderer.cell_width
+                                || metrics.cell_height != measured_renderer.cell_height
+                        };
+                        if cols != current_cols || rows != current_rows || metrics_changed {
+                            if let Some(callback) = &pixel_resize_callback {
+                                callback(
+                                    cols,
+                                    rows,
+                                    cell_width_f32.round().clamp(1.0, 1024.0) as u16,
+                                    cell_height_f32.round().clamp(1.0, 1024.0) as u16,
+                                );
+                            }
+                        }
                         if cols != current_cols || rows != current_rows {
                             // Notify the PTY about the resize
                             if let Some(ref callback) = resize_callback {
                                 callback(cols, rows);
                             }
-                            term.resize(TermSize { cols, rows });
+                            if !mirrored {
+                                term.resize(TermSize { cols, rows });
+                            }
                         }
 
                         // Update cell metrics for mouse coordinate conversion
@@ -1388,6 +1668,59 @@ impl Render for TerminalView {
 
                         // Paint the terminal with measured dimensions
                         measured_renderer.paint(bounds, padding, &term, window, cx);
+
+                        // Search coordinates refer to grid lines, which can be negative
+                        // for scrollback. Paint only the visible part of each match.
+                        let offset = term.grid().display_offset() as i32;
+                        let origin = gpui::point(
+                            bounds.origin.x + padding.left,
+                            bounds.origin.y + padding.top,
+                        );
+                        for (index, range) in search_matches.iter().enumerate() {
+                            let first = range.start().line.0.max(-offset);
+                            let last = range.end().line.0.min(rows as i32 - 1 - offset);
+                            let color = gpui::Hsla {
+                                h: 0.12,
+                                s: 0.8,
+                                l: 0.5,
+                                a: if Some(index) == search_active {
+                                    0.55
+                                } else {
+                                    0.22
+                                },
+                            };
+                            for line in first..=last {
+                                let start = if line == range.start().line.0 {
+                                    range.start().column.0
+                                } else {
+                                    0
+                                };
+                                let end = if line == range.end().line.0 {
+                                    range.end().column.0
+                                } else {
+                                    cols - 1
+                                };
+                                window.paint_quad(gpui::quad(
+                                    gpui::Bounds {
+                                        origin: gpui::point(
+                                            origin.x + measured_renderer.cell_width * start as f32,
+                                            origin.y
+                                                + measured_renderer.cell_height
+                                                    * (line + offset) as f32,
+                                        ),
+                                        size: gpui::size(
+                                            measured_renderer.cell_width * (end - start + 1) as f32,
+                                            measured_renderer.cell_height,
+                                        ),
+                                    },
+                                    px(0.0),
+                                    color,
+                                    Edges::default(),
+                                    transparent_black(),
+                                    Default::default(),
+                                ));
+                            }
+                        }
 
                         let selection_range: Option<SelectionRange> = term
                             .selection
@@ -1410,8 +1743,10 @@ impl Render for TerminalView {
                                 a: 0.3,
                             };
 
-                            let first_visible_line = selection.start.line.0.max(0);
-                            let last_visible_line = selection.end.line.0.min(rows as i32 - 1);
+                            let offset = term.grid().display_offset() as i32;
+                            let first_visible_line = selection.start.line.0.max(-offset);
+                            let last_visible_line =
+                                selection.end.line.0.min(rows as i32 - 1 - offset);
 
                             for line_idx in first_visible_line..=last_visible_line {
                                 let col_start = if line_idx == selection.start.line.0 {
@@ -1435,7 +1770,7 @@ impl Render for TerminalView {
                                 }
 
                                 let x = origin.x + cw * (col_start as f32);
-                                let y = origin.y + ch * (line_idx as f32);
+                                let y = origin.y + ch * ((line_idx + offset) as f32);
                                 let w = cw * ((col_end - col_start + 1) as f32);
 
                                 window.paint_quad(gpui::quad(

@@ -20,7 +20,7 @@ impl InstanceGuard {
 
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
-        let _ = self.lock_file.unlock();
+        let _ = FileExt::unlock(&self.lock_file);
     }
 }
 

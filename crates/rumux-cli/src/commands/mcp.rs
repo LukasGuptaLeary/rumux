@@ -147,6 +147,16 @@ fn handle_tool_call(params: &Value) -> Result<Value> {
         "get_current_workspace" => execute_rpc(name, "workspace.current", Value::Object(arguments)),
         "select_workspace" => execute_rpc(name, "workspace.select", Value::Object(arguments)),
         "create_workspace" => execute_rpc(name, "workspace.create", Value::Object(arguments)),
+        "create_ssh_workspace" => {
+            let connection: rumux_core::ssh::SshConnection = serde_json::from_value(
+                arguments
+                    .get("ssh")
+                    .cloned()
+                    .context("create_ssh_workspace requires ssh parameters")?,
+            )?;
+            connection.validate()?;
+            execute_rpc(name, "workspace.create", Value::Object(arguments))
+        }
         "rename_workspace" => execute_rpc(name, "workspace.rename", Value::Object(arguments)),
         "duplicate_workspace" => execute_rpc(name, "workspace.duplicate", Value::Object(arguments)),
         "next_workspace" => execute_rpc(name, "workspace.next", Value::Object(arguments)),
@@ -158,6 +168,7 @@ fn handle_tool_call(params: &Value) -> Result<Value> {
         "split_surface" => execute_rpc(name, "surface.split", Value::Object(arguments)),
         "close_surface" => execute_rpc(name, "surface.close", Value::Object(arguments)),
         "rename_surface" => execute_rpc(name, "surface.rename", Value::Object(arguments)),
+        "set_surface_status" => execute_rpc(name, "surface.set_status", Value::Object(arguments)),
         "next_surface" => execute_rpc(name, "surface.next", Value::Object(arguments)),
         "prev_surface" => execute_rpc(name, "surface.prev", Value::Object(arguments)),
         "zoom_surface" => execute_rpc(name, "surface.zoom", Value::Object(arguments)),
@@ -174,6 +185,18 @@ fn handle_tool_call(params: &Value) -> Result<Value> {
         "create_notification" => execute_rpc(name, "notification.create", Value::Object(arguments)),
         "list_notifications" => execute_rpc(name, "notification.list", Value::Object(arguments)),
         "clear_notifications" => execute_rpc(name, "notification.clear", Value::Object(arguments)),
+        "focus_notification" => execute_rpc(name, "notification.focus", Value::Object(arguments)),
+        "create_browser" => execute_rpc(name, "browser.create", Value::Object(arguments)),
+        "navigate_browser" => execute_rpc(name, "browser.navigate", Value::Object(arguments)),
+        "get_browser_state" => execute_rpc(name, "browser.state", Value::Object(arguments)),
+        "browser_back" => execute_rpc(name, "browser.back", Value::Object(arguments)),
+        "browser_forward" => execute_rpc(name, "browser.forward", Value::Object(arguments)),
+        "reload_browser" => execute_rpc(name, "browser.reload", Value::Object(arguments)),
+        "stop_browser" => execute_rpc(name, "browser.stop", Value::Object(arguments)),
+        "evaluate_browser" => execute_rpc(name, "browser.eval", Value::Object(arguments)),
+        "snapshot_browser" => execute_rpc(name, "browser.snapshot", Value::Object(arguments)),
+        "click_browser" => execute_rpc(name, "browser.click", Value::Object(arguments)),
+        "fill_browser" => execute_rpc(name, "browser.fill", Value::Object(arguments)),
         "rpc_raw" => {
             let method = arguments
                 .get("method")
@@ -300,6 +323,29 @@ fn tool_definitions() -> Vec<Value> {
             json_schema_object([("name", string_schema("Optional workspace name"))]),
         ),
         tool(
+            "create_ssh_workspace",
+            "Create an OpenSSH workspace on a POSIX remote host. Tabs and splits inherit the host and remote directory. Forwarded listeners belong to the original pane; host authentication uses OpenSSH known-host verification.",
+            json!({"type":"object", "properties": {
+                "name": string_schema("Optional workspace name"),
+                "ssh": {"type":"object", "properties": {
+                    "host": string_schema("Host, IP address or OpenSSH configuration alias"),
+                    "user": string_schema("Optional remote username"),
+                    "port": {"type":"integer", "minimum":1, "maximum":65535},
+                    "directory": string_schema("Absolute POSIX launch directory"),
+                    "identity_file": string_schema("Local private-key file; OpenSSH handles authentication"),
+                    "known_hosts_file": string_schema("Local known-hosts file; strict host-key checking when supplied"),
+                    "config_file": string_schema("Optional local OpenSSH configuration file"),
+                    "forwards": {"type":"array", "maxItems":16, "items": {
+                        "type":"object", "properties": {
+                            "local_port": {"type":"integer", "minimum":1, "maximum":65535},
+                            "remote_port": {"type":"integer", "minimum":1, "maximum":65535},
+                            "remote_host": string_schema("Remote forwarding host; defaults to 127.0.0.1")
+                        }, "required":["local_port","remote_port"], "additionalProperties":false
+                    }}
+                }, "required":["host"], "additionalProperties":false}
+            }, "required":["ssh"], "additionalProperties":false}),
+        ),
+        tool(
             "rename_workspace",
             "Rename a workspace by index or exact name.",
             json_schema_object([
@@ -326,7 +372,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "list_surfaces",
-            "List terminal surfaces for a workspace.",
+            "List terminal and browser surfaces for a workspace.",
             json_schema_object([
                 ("workspace_index", integer_schema("Workspace index")),
                 ("workspace_name", string_schema("Exact workspace name")),
@@ -334,7 +380,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "focus_surface",
-            "Focus a terminal surface by workspace and optional surface index.",
+            "Focus a surface by workspace and optional surface index.",
             json_schema_object([
                 ("workspace_index", integer_schema("Workspace index")),
                 ("workspace_name", string_schema("Exact workspace name")),
@@ -369,7 +415,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "close_surface",
-            "Close a terminal surface by workspace and optional surface index.",
+            "Close a surface by workspace and optional surface index.",
             json_schema_object([
                 ("workspace_index", integer_schema("Workspace index")),
                 ("workspace_name", string_schema("Exact workspace name")),
@@ -378,12 +424,25 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "rename_surface",
-            "Rename a terminal tab by workspace and optional surface index. Pass an empty string to clear the custom title.",
+            "Rename a tab by workspace and optional surface index. Pass an empty string to clear the custom title.",
             json_schema_object([
                 ("workspace_index", integer_schema("Workspace index")),
                 ("workspace_name", string_schema("Exact workspace name")),
                 ("surface_index", integer_schema("Surface index")),
                 ("name", string_schema("New tab title")),
+            ]),
+        ),
+        tool(
+            "set_surface_status",
+            "Report whether an agent is idle, working or needs input.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                ("surface_index", integer_schema("Surface index")),
+                (
+                    "status",
+                    json!({ "type": "string", "enum": ["idle", "working", "blocked"] }),
+                ),
+                ("message", string_schema("Optional short status detail")),
             ]),
         ),
         tool(
@@ -480,10 +539,151 @@ fn tool_definitions() -> Vec<Value> {
                 ("subtitle", string_schema("Optional notification subtitle")),
                 ("body", string_schema("Notification body")),
                 ("workspace_index", integer_schema("Target workspace index")),
+                ("surface_index", integer_schema("Target terminal index")),
                 (
                     "workspace_name",
                     string_schema("Exact target workspace name"),
                 ),
+            ]),
+        ),
+        tool(
+            "focus_notification",
+            "Focus a notification's originating workspace and terminal, and mark it read.",
+            json_schema_object([("id", string_schema("Notification ID"))]),
+        ),
+        tool(
+            "create_browser",
+            "Open an embedded browser tab or split for a local preview or website.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("url", string_schema("HTTP(S) URL; default about:blank")),
+                (
+                    "placement",
+                    json!({"type":"string","enum":["right","down"]}),
+                ),
+            ]),
+        ),
+        tool(
+            "navigate_browser",
+            "Navigate an existing browser to an HTTP(S) URL.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("url", string_schema("HTTP(S) URL")),
+            ]),
+        ),
+        tool(
+            "get_browser_state",
+            "Read browser URL, title, loading state and errors.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "browser_back",
+            "Navigate back in this browser history.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "browser_forward",
+            "Navigate forward in this browser history.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "reload_browser",
+            "Reload the current browser page.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "stop_browser",
+            "Stop loading this browser page.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "evaluate_browser",
+            "Evaluate a synchronous JavaScript expression in the browser page.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("expression", string_schema("JavaScript expression")),
+                (
+                    "timeout_ms",
+                    integer_schema("Evaluation timeout in milliseconds"),
+                ),
+            ]),
+        ),
+        tool(
+            "snapshot_browser",
+            "Read bounded page text and interactive elements; password values are omitted.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+            ]),
+        ),
+        tool(
+            "click_browser",
+            "Click a browser element matching a CSS selector.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("selector", string_schema("CSS selector")),
+            ]),
+        ),
+        tool(
+            "fill_browser",
+            "Fill a form field and dispatch input/change events.",
+            json_schema_object([
+                ("workspace_index", integer_schema("Workspace index")),
+                (
+                    "surface_index",
+                    integer_schema("Browser surface index or creation anchor"),
+                ),
+                ("selector", string_schema("CSS selector")),
+                ("text", string_schema("Field value")),
             ]),
         ),
         tool(
@@ -504,7 +704,29 @@ fn tool_definitions() -> Vec<Value> {
     ]
 }
 
-fn tool(name: &str, description: &str, input_schema: Value) -> Value {
+fn tool(name: &str, description: &str, mut input_schema: Value) -> Value {
+    if let Some(properties) = input_schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    {
+        if properties.contains_key("workspace_index")
+            || matches!(
+                name,
+                "select_workspace" | "close_workspace" | "rename_workspace" | "duplicate_workspace"
+            )
+        {
+            properties.insert(
+                "workspace_id".into(),
+                string_schema("Stable workspace UUID; use one workspace selector"),
+            );
+        }
+        if properties.contains_key("surface_index") {
+            properties.insert(
+                "surface_id".into(),
+                string_schema("Stable surface UUID; can be used without a workspace selector"),
+            );
+        }
+    }
     json!({
         "name": name,
         "description": description,

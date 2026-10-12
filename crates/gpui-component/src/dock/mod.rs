@@ -584,6 +584,11 @@ impl DockArea {
         self.zoom_view.is_some()
     }
 
+    /// Native child views need to hide when another pane is zoomed.
+    pub fn zoomed_view_id(&self) -> Option<gpui::EntityId> {
+        self.zoom_view.as_ref().map(|view| view.entity_id())
+    }
+
     pub fn items(&self) -> &DockItem {
         &self.items
     }

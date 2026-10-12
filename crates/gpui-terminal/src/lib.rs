@@ -342,8 +342,10 @@ pub mod clipboard;
 pub mod colors;
 pub mod event;
 pub mod input;
+pub mod mirror;
 pub mod mouse;
 pub mod render;
+pub mod search;
 pub mod terminal;
 pub mod view;
 
@@ -355,5 +357,5 @@ pub use render::TerminalRenderer;
 pub use terminal::TerminalState;
 pub use view::{
     BellCallback, ClipboardStoreCallback, ExitCallback, KeyHandler, ResizeCallback, TerminalConfig,
-    TerminalView, TitleCallback,
+    TerminalView, TerminalViewEvent, TitleCallback,
 };

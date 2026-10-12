@@ -1,4 +1,4 @@
-/target
+target/
 dist/
 .idea/
 .claude/
@@ -7,3 +7,4 @@ dist/
 .DS_Store
 *.swp
 *.swo
+__pycache__/

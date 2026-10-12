@@ -1,6 +1,71 @@
 use std::path::Path;
 use tempfile::TempDir;
 
+#[test]
+fn rpc_rejects_non_object_params_before_origin_injection_or_transport() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rumux"))
+        .args(["rpc", "surface.read", "[]"])
+        .env("RUMUX_SURFACE_ID", "28d68b52-1fb6-4667-9b88-02d60aa5a330")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("JSON object"));
+}
+
+#[test]
+fn cli_prepares_worktree_and_launches_a_configured_program_without_an_agent_dependency() {
+    use std::process::Command;
+    let (tmp, _repo) = setup_repo();
+    let binary = env!("CARGO_BIN_EXE_rumux");
+    let prepared = Command::new(binary)
+        .current_dir(tmp.path())
+        .args(["new", "agent-independent", "--no-agent"])
+        .env_remove("RUMUX_AGENT")
+        .output()
+        .unwrap();
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    let worktree = std::path::PathBuf::from(String::from_utf8(prepared.stdout).unwrap().trim());
+    assert!(worktree.join(".git").is_file());
+    let launched = Command::new(binary)
+        .current_dir(tmp.path())
+        .args([
+            "start",
+            "agent-independent",
+            "--agent",
+            binary,
+            "--agent-arg",
+            "version",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        launched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&launched.stderr)
+    );
+    assert!(String::from_utf8_lossy(&launched.stdout).contains(env!("CARGO_PKG_VERSION")));
+    let failed = Command::new(binary)
+        .current_dir(tmp.path())
+        .args([
+            "start",
+            "agent-independent",
+            "--agent",
+            binary,
+            "--agent-arg",
+            "unknown-command",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !failed.status.success(),
+        "An agent's failure must be visible to callers"
+    );
+}
+
 /// Helper: create a temp git repo with an initial commit.
 fn setup_repo() -> (TempDir, git2::Repository) {
     let tmp = TempDir::new().unwrap();

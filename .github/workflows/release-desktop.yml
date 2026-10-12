@@ -55,6 +55,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - runner: macos-14
             target: aarch64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,12 +70,55 @@ jobs:
         with:
           key: release-desktop-${{ matrix.target }}
 
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: sudo bash scripts/install-linux-deps.sh
+
       - name: Package desktop artifact
         shell: bash
         run: |
           set -euo pipefail
           chmod +x scripts/package-desktop.sh
           TARGET="${{ matrix.target }}" BUILD_TARGET="${{ matrix.target }}" ./scripts/package-desktop.sh
+
+      - name: Qualify installed package (Linux)
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a python3 scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.tar.gz --ssh
+
+      - name: Qualify installed package (macOS)
+        if: runner.os == 'macOS'
+        run: python3 scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.zip --ssh
+
+      - name: Cache Windows SSH target rootfs
+        if: runner.os == 'Windows'
+        id: wsl_rootfs
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/rumux-wsl-rootfs
+          key: wsl-ssh-rootfs-1483cc5c1dce13064f774834cbffdff226559fd522a67a381a8ea77d63fb4109
+
+      - name: Prepare owned Windows SSH target
+        id: windows_ssh_host
+        if: runner.os == 'Windows'
+        run: python scripts/windows-ssh-host.py setup
+
+      - name: Verify native Windows SSH fixture
+        if: runner.os == 'Windows'
+        run: python scripts/windows_ssh_fixture.py
+
+      - name: Qualify installed package (Windows)
+        if: always() && runner.os == 'Windows' && steps.windows_ssh_host.conclusion == 'success'
+        run: python scripts/smoke-package.py --archive dist/desktop/artifacts/rumux-desktop-${{ matrix.target }}.zip --ssh
+
+      - name: Cache verified Windows SSH target rootfs
+        if: always() && runner.os == 'Windows' && steps.wsl_rootfs.outputs.cache-hit != 'true' && steps.windows_ssh_host.outputs.rootfs_verified == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/rumux-wsl-rootfs
+          key: wsl-ssh-rootfs-1483cc5c1dce13064f774834cbffdff226559fd522a67a381a8ea77d63fb4109
+      - name: Remove owned Windows SSH target
+        if: always() && runner.os == 'Windows'
+        run: python scripts/windows-ssh-host.py cleanup
 
       - uses: actions/upload-artifact@v4
         with:

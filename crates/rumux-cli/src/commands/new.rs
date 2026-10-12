@@ -2,11 +2,11 @@ use anyhow::Result;
 use console::style;
 
 use crate::hook::run_setup_hook;
-use crate::shell::launch_claude;
+use crate::shell::{AgentOptions, launch_agent};
 use rumux_core::config::{find_repo_root, sanitize_branch_name, worktree_path};
 use rumux_core::git_ops::create_worktree;
 
-pub fn run(branch: &str, prompt: Option<&str>) -> Result<()> {
+pub fn run(branch: &str, prompt: Option<&str>, agent: &AgentOptions) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let repo_root = find_repo_root(&cwd)?;
     let sanitized = sanitize_branch_name(branch);
@@ -34,12 +34,15 @@ pub fn run(branch: &str, prompt: Option<&str>) -> Result<()> {
         run_setup_hook(&wt_path)?;
     }
 
-    // Launch claude
+    if agent.no_agent {
+        println!("{}", wt_path.display());
+        return Ok(());
+    }
     eprintln!(
         "{}",
-        style(format!("Launching Claude Code in {}...", wt_path.display())).dim()
+        style(format!("Launching agent in {}...", wt_path.display())).dim()
     );
-    launch_claude(&wt_path, prompt)?;
+    launch_agent(&wt_path, prompt, false, agent)?;
 
     Ok(())
 }

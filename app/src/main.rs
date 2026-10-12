@@ -1,6 +1,8 @@
 #![warn(clippy::all)]
 
 mod app_state;
+mod browser;
+mod browser_panel;
 mod command_palette;
 mod config;
 mod custom_commands;
@@ -12,10 +14,18 @@ mod root_view;
 mod session;
 mod sidebar;
 mod socket_server;
+mod ssh_dialog;
 mod terminal_panel;
+mod terminal_service;
 mod terminal_surface;
 mod theme;
 mod workspace;
+
+// Exercise the exact vendored rendering guard in the workspace test barrier;
+// Cargo does not run dev-dependency tests for a patched external package.
+#[cfg(test)]
+#[path = "../../crates/gpui/src/render_stack.rs"]
+mod render_stack_checks;
 
 use gpui::*;
 
@@ -23,6 +33,34 @@ use app_state::AppState;
 use root_view::*;
 
 fn main() {
+    let arguments: Vec<_> = std::env::args().collect();
+    if arguments.get(1).map(String::as_str) == Some("--terminal-complete") {
+        let result = (|| -> anyhow::Result<()> {
+            anyhow::ensure!(
+                arguments.len() == 4,
+                "Expected a command token and exit status"
+            );
+            terminal_service::emit_completion(&arguments[2], arguments[3].parse()?)
+        })();
+        if let Err(error) = result {
+            eprintln!("Terminal completion failed: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if std::env::args().any(|argument| argument == "--terminal-service") {
+        if let Err(error) = terminal_service::run() {
+            eprintln!("Terminal service failed: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    // This runs before any application threads are created. Native child
+    // WebView2 windows need GPUI's HWND composition path.
+    unsafe {
+        std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "true");
+    }
     const APP_ID: &str = "io.github.lukasguptaleary.rumux";
 
     let _instance_guard = match instance::acquire_or_activate_existing() {
@@ -33,15 +71,43 @@ fn main() {
             std::process::exit(1);
         }
     };
+    let terminal_client = match terminal_service::ensure_started() {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("Failed to start rumux: {error:#}");
+            std::process::exit(1);
+        }
+    };
 
-    let app = Application::new().with_assets(gpui_component_assets::Assets);
+    // GTK child browsers can share an X11/XWayland parent; keep the original
+    // session environment intact for terminals and programs launched inside.
+    #[cfg(target_os = "linux")]
+    let application = if std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty())
+        && std::env::var("RUMUX_LINUX_BACKEND").as_deref() != Ok("wayland")
+    {
+        match Application::x11() {
+            Ok(app) => app,
+            Err(error) => {
+                eprintln!("Failed to open X11/XWayland display: {error:#}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        Application::new()
+    };
+    #[cfg(not(target_os = "linux"))]
+    let application = Application::new();
+    let app = application.with_assets(gpui_component_assets::Assets);
 
     app.run(move |cx| {
+        cx.set_global(terminal_service::ServiceClient(terminal_client));
         gpui_component::init(cx);
         gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
 
         // Register panel types for DockArea serialization
         terminal_panel::register(cx);
+        browser::init(cx);
+        browser_panel::register(cx);
 
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-n", NewWorkspace, None),
@@ -54,6 +120,8 @@ fn main() {
             KeyBinding::new("cmd-shift-d", SplitDown, None),
             KeyBinding::new("ctrl-shift-t", NewTerminal, None),
             KeyBinding::new("cmd-t", NewTerminal, None),
+            KeyBinding::new("ctrl-shift-o", NewBrowser, None),
+            KeyBinding::new("cmd-shift-o", NewBrowser, None),
             KeyBinding::new("ctrl-shift-x", CloseTerminal, None),
             KeyBinding::new("cmd-w", CloseTerminal, None),
             KeyBinding::new("ctrl-tab", NextWorkspace, None),
@@ -80,6 +148,16 @@ fn main() {
 
         cx.spawn(async move |cx: &mut AsyncApp| {
             let app_state = cx.new(|cx| AppState::new(&mut *cx))?;
+            let state_for_quit = app_state.downgrade();
+            cx.update(|cx| {
+                cx.on_app_quit(move |cx| {
+                    if let Some(state) = state_for_quit.upgrade() {
+                        state.read(cx).save_session(cx);
+                    }
+                    async {}
+                })
+                .detach();
+            })?;
 
             let main_window = cx.open_window(
                 WindowOptions {
