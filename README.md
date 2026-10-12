@@ -102,6 +102,26 @@ on older distributions.
 
 Current desktop support policy lives in [COMPATIBILITY.md](COMPATIBILITY.md).
 
+### Terminal appearance
+
+The terminal uses a neutral dark background, a Catppuccin-derived ANSI palette,
+and brighter comment/detail colors. Defaults are 15 px text, 1.25 line height
+and 12 px pane padding. Keep your preferred monospace font and adjust spacing in
+`config.toml`:
+
+```toml
+font_family = "Menlo" # macOS; Consolas on Windows, DejaVu Sans Mono on Linux
+font_size = 15.0
+line_height = 1.25
+terminal_padding = 12.0
+```
+
+Reopen Rumux to apply font and spacing changes. Existing font preferences are
+preserved. Syntax colors come from your shell, editor or command-line tools:
+Rumux renders ANSI/256-color and true-color output, including bold, italic,
+underline, dim, inverse and application palette overrides. It does not infer a
+programming language from arbitrary terminal output.
+
 ## Usage
 
 | Command | Description |

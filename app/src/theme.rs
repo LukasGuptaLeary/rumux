@@ -4,8 +4,8 @@ use gpui_terminal::ColorPalette;
 
 pub fn catppuccin_mocha() -> ColorPalette {
     ColorPalette::builder()
-        .background(0x1e, 0x1e, 0x2e)
-        .foreground(0xcd, 0xd6, 0xf4)
+        .background(0x17, 0x1a, 0x20)
+        .foreground(0xe5, 0xe9, 0xf0)
         .cursor(0xf5, 0xe0, 0xdc)
         .black(0x45, 0x47, 0x5a)
         .red(0xf3, 0x8b, 0xa8)
@@ -15,31 +15,56 @@ pub fn catppuccin_mocha() -> ColorPalette {
         .magenta(0xf5, 0xc2, 0xe7)
         .cyan(0x94, 0xe2, 0xd5)
         .white(0xba, 0xc2, 0xde)
-        .bright_black(0x58, 0x5b, 0x70)
+        .bright_black(0x8f, 0x9b, 0xb3)
         .bright_red(0xf3, 0x8b, 0xa8)
         .bright_green(0xa6, 0xe3, 0xa1)
         .bright_yellow(0xf9, 0xe2, 0xaf)
         .bright_blue(0x89, 0xb4, 0xfa)
         .bright_magenta(0xf5, 0xc2, 0xe7)
         .bright_cyan(0x94, 0xe2, 0xd5)
-        .bright_white(0xa6, 0xad, 0xc8)
+        .bright_white(0xf5, 0xf7, 0xfa)
         .build()
 }
 
-// UI chrome colors (Catppuccin Mocha)
-pub const BG_PRIMARY: u32 = 0x1e1e2e;
-pub const BG_SECONDARY: u32 = 0x181825;
-pub const BG_SURFACE: u32 = 0x11111b;
-pub const BG_HOVER: u32 = 0x313244;
-pub const TEXT_PRIMARY: u32 = 0xcdd6f4;
-pub const TEXT_SECONDARY: u32 = 0xa6adc8;
-pub const TEXT_DIM: u32 = 0x6c7086;
+// Neutral surfaces with a Catppuccin-derived ANSI palette.
+pub const BG_PRIMARY: u32 = 0x171a20;
+pub const BG_SECONDARY: u32 = 0x13161b;
+pub const BG_SURFACE: u32 = 0x101319;
+pub const BG_HOVER: u32 = 0x252b34;
+pub const TEXT_PRIMARY: u32 = 0xe5e9f0;
+pub const TEXT_SECONDARY: u32 = 0xadb8cc;
+pub const TEXT_DIM: u32 = 0x8592a7;
 pub const ACCENT: u32 = 0x89b4fa;
 pub const ACCENT_GREEN: u32 = 0xa6e3a1;
 pub const ACCENT_RED: u32 = 0xf38ba8;
 pub const ACCENT_YELLOW: u32 = 0xf9e2af;
-pub const BORDER: u32 = 0x313244;
-pub const DIVIDER: u32 = 0x45475a;
+pub const BORDER: u32 = 0x2b313b;
+pub const DIVIDER: u32 = 0x424b5a;
+
+pub fn apply_component_theme(cx: &mut gpui::App) {
+    use gpui::{px, rgb};
+    let theme = gpui_component::Theme::global_mut(cx);
+    theme.font_size = px(13.0);
+    theme.radius = px(6.0);
+    let colors = &mut theme.colors;
+    colors.background = rgb(BG_PRIMARY).into();
+    colors.foreground = rgb(TEXT_PRIMARY).into();
+    colors.border = rgb(BORDER).into();
+    colors.muted = rgb(BG_HOVER).into();
+    colors.muted_foreground = rgb(TEXT_SECONDARY).into();
+    colors.accent = rgb(BG_HOVER).into();
+    colors.accent_foreground = rgb(TEXT_PRIMARY).into();
+    colors.primary = rgb(ACCENT).into();
+    colors.primary_foreground = rgb(BG_SURFACE).into();
+    colors.ring = rgb(ACCENT).into();
+    colors.tab = rgb(BG_SECONDARY).into();
+    colors.tab_bar = rgb(BG_SECONDARY).into();
+    colors.tab_active = rgb(BG_PRIMARY).into();
+    colors.tab_active_foreground = rgb(TEXT_PRIMARY).into();
+    colors.tab_foreground = rgb(TEXT_SECONDARY).into();
+    colors.popover = rgb(BG_SECONDARY).into();
+    colors.popover_foreground = rgb(TEXT_PRIMARY).into();
+}
 
 pub const WORKSPACE_COLORS: [u32; 8] = [
     0x89b4fa, // Blue

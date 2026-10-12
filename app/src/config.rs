@@ -8,6 +8,8 @@ use std::path::PathBuf;
 pub struct RumuxConfig {
     pub font_family: String,
     pub font_size: f32,
+    pub line_height: f32,
+    pub terminal_padding: f32,
     pub scrollback: usize,
     pub persist_scrollback: bool,
     pub sidebar_visible: bool,
@@ -21,7 +23,9 @@ impl Default for RumuxConfig {
     fn default() -> Self {
         Self {
             font_family: default_terminal_font().to_string(),
-            font_size: 14.0,
+            font_size: 15.0,
+            line_height: 1.25,
+            terminal_padding: 12.0,
             scrollback: 10_000,
             persist_scrollback: true,
             sidebar_visible: true,
@@ -44,6 +48,22 @@ pub fn default_terminal_font() -> &'static str {
 }
 
 impl RumuxConfig {
+    /// Keep user-provided metrics finite and usable by the terminal grid.
+    pub fn terminal_metrics(&self) -> (f32, f32, f32) {
+        fn bounded(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
+            if value.is_finite() {
+                value.clamp(min, max)
+            } else {
+                fallback
+            }
+        }
+        (
+            bounded(self.font_size, 6.0, 72.0, 15.0),
+            bounded(self.line_height, 1.0, 2.0, 1.25),
+            bounded(self.terminal_padding, 0.0, 48.0, 12.0),
+        )
+    }
+
     pub fn load() -> Self {
         // Try rumux config first
         if let Some(path) = rumux_config_path() {
@@ -139,7 +159,7 @@ mod tests {
     fn test_default_config() {
         let config = RumuxConfig::default();
         assert_eq!(config.font_family, default_terminal_font());
-        assert_eq!(config.font_size, 14.0);
+        assert_eq!(config.font_size, 15.0);
         assert_eq!(config.scrollback, 10_000);
     }
 
@@ -156,6 +176,21 @@ scrollback = 50000
         assert_eq!(config.scrollback, 50000);
         // Defaults for unset fields
         assert!(config.sidebar_visible);
+    }
+
+    #[test]
+    fn terminal_metrics_preserve_preferences_and_bound_invalid_values() {
+        let config: RumuxConfig =
+            toml::from_str("font_size = 16.0\nline_height = 1.4\nterminal_padding = 8.0\n")
+                .unwrap();
+        assert_eq!(config.terminal_metrics(), (16.0, 1.4, 8.0));
+        let invalid = RumuxConfig {
+            font_size: f32::NAN,
+            line_height: f32::INFINITY,
+            terminal_padding: -5.0,
+            ..Default::default()
+        };
+        assert_eq!(invalid.terminal_metrics(), (15.0, 1.25, 0.0));
     }
 
     #[test]

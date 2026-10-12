@@ -188,6 +188,21 @@ pub struct TerminalRenderer {
 }
 
 impl TerminalRenderer {
+    fn cell_colors(&self, cell: &Cell, colors: &Colors) -> (Hsla, Hsla) {
+        let mut foreground = self.palette.resolve(cell.fg, colors);
+        let mut background = self.palette.resolve(cell.bg, colors);
+        if cell.flags.contains(Flags::DIM) {
+            foreground.l *= 0.7;
+        }
+        if cell.flags.contains(Flags::INVERSE) {
+            std::mem::swap(&mut foreground, &mut background);
+        }
+        if cell.flags.contains(Flags::HIDDEN) {
+            foreground = background;
+        }
+        (foreground, background)
+    }
+
     /// Creates a new terminal renderer with the given font settings and color palette.
     ///
     /// # Arguments
@@ -312,8 +327,7 @@ impl TerminalRenderer {
             }
 
             // Extract cell styling
-            let fg_color = self.palette.resolve(cell.fg, colors);
-            let bg_color = self.palette.resolve(cell.bg, colors);
+            let (fg_color, bg_color) = self.cell_colors(&cell, colors);
             let bold = cell.flags.contains(Flags::BOLD);
             let italic = cell.flags.contains(Flags::ITALIC);
             let underline = cell.flags.contains(Flags::UNDERLINE);
@@ -551,7 +565,7 @@ impl TerminalRenderer {
 
                 // Check if this starts a horizontal span
                 if let Some(weight) = box_drawing::get_horizontal_weight(ch) {
-                    let fg_color = self.palette.resolve(cell.fg, colors);
+                    let (fg_color, _) = self.cell_colors(cell, colors);
                     let start_col = col_idx;
                     let mut end_col = col_idx;
 
@@ -610,7 +624,7 @@ impl TerminalRenderer {
                 }
 
                 let x = origin.x + self.cell_width * (*col_idx as f32);
-                let fg_color = self.palette.resolve(cell.fg, colors);
+                let (fg_color, _) = self.cell_colors(cell, colors);
 
                 if box_drawing::is_box_drawing_char(ch) {
                     let cell_bounds = Bounds {
@@ -654,7 +668,7 @@ impl TerminalRenderer {
                 }
 
                 let x = origin.x + self.cell_width * (*col_idx as f32);
-                let fg_color = self.palette.resolve(cell.fg, colors);
+                let (fg_color, _) = self.cell_colors(cell, colors);
 
                 // For regular text, apply vertical offset for centering
                 let y = y_base + vertical_offset;
@@ -709,7 +723,9 @@ impl TerminalRenderer {
                         .shape_line(text, self.font_size, &[text_run], None);
 
                 // Paint at exact cell position (ignore errors)
-                let _ = shaped_line.paint(Point { x, y }, self.cell_height, window, _cx);
+                // The row's extra leading is already distributed by y. GPUI
+                // also centers a shaped line within the supplied line height.
+                let _ = shaped_line.paint(Point { x, y }, base_height, window, _cx);
             }
         }
 
@@ -755,6 +771,46 @@ impl TerminalRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sgr_styles_preserve_true_color_and_render_dim_inverse_and_hidden() {
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut terminal = crate::terminal::TerminalState::new(20, 2, GpuiEventProxy::new(sender));
+        terminal.process_bytes(b"\x1b[38;2;130;210;180mA\x1b[2mB\x1b[22;7mC\x1b[27;8mD\x1b[0m");
+        let renderer =
+            TerminalRenderer::new("monospace".into(), px(15.0), 1.25, ColorPalette::default());
+        terminal.with_term(|term| {
+            let row = &term.grid()[Line(0)];
+            let normal = renderer.cell_colors(&row[Column(0)], term.colors());
+            let dim = renderer.cell_colors(&row[Column(1)], term.colors());
+            let inverse = renderer.cell_colors(&row[Column(2)], term.colors());
+            let hidden = renderer.cell_colors(&row[Column(3)], term.colors());
+            let explicit = Color::Spec(alacritty_terminal::vte::ansi::Rgb {
+                r: 130,
+                g: 210,
+                b: 180,
+            });
+            assert_eq!(normal.0, renderer.palette.resolve(explicit, term.colors()));
+            assert!(dim.0.l < normal.0.l);
+            assert_eq!(dim.1, normal.1);
+            assert_eq!(inverse, (normal.1, normal.0));
+            assert_eq!(hidden.0, hidden.1);
+            let (backgrounds, runs) = renderer.layout_row(
+                0,
+                (0..4).map(|col| (col, row[Column(col)].clone())),
+                term.colors(),
+            );
+            assert!(
+                backgrounds
+                    .iter()
+                    .any(|rect| rect.start_col == 2 && rect.end_col == 3 && rect.color == normal.0)
+            );
+            assert_eq!(
+                runs.iter().find(|run| run.text == "C").unwrap().fg_color,
+                normal.1
+            );
+        });
+    }
 
     #[test]
     fn test_renderer_creation() {

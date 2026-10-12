@@ -360,8 +360,10 @@ impl ColorPalette {
                 rgb_to_hsla(rgb)
             }
             Color::Indexed(idx) => {
-                // 256-color mode
-                self.extended_colors[idx as usize]
+                // OSC 4 overrides apply to indexed colors too, including 0–15.
+                colors[idx as usize]
+                    .map(rgb_to_hsla)
+                    .unwrap_or(self.extended_colors[idx as usize])
             }
         }
     }
@@ -663,5 +665,35 @@ mod tests {
         };
         let hsla = palette.resolve(Color::Spec(rgb), &colors);
         assert_eq!(hsla.a, 1.0);
+    }
+
+    #[test]
+    fn indexed_overrides_do_not_change_true_color() {
+        let palette = ColorPalette::new();
+        let mut colors = Colors::default();
+        let override_rgb = Rgb {
+            r: 32,
+            g: 64,
+            b: 96,
+        };
+        colors[42] = Some(override_rgb);
+        assert_eq!(
+            palette.resolve(Color::Indexed(42), &colors),
+            rgb_to_hsla(override_rgb)
+        );
+        let explicit = Rgb {
+            r: 130,
+            g: 210,
+            b: 180,
+        };
+        assert_eq!(
+            palette.resolve(Color::Spec(explicit), &colors),
+            rgb_to_hsla(explicit)
+        );
+        colors[42] = None;
+        assert_eq!(
+            palette.resolve(Color::Indexed(42), &colors),
+            palette.extended_colors[42]
+        );
     }
 }

@@ -518,3 +518,36 @@ owned display completed the same installed barrier without rebuilding or
 weakening assertions. Clippy, Python compilation, rustfmt and actionlint passed.
 Final native evidence is recorded on PR #9 and in the local package qualification
 manifest so recording a CI run does not recursively require another source edit.
+
+## Terminal readability follow-up
+
+PR #9 merged as `1e2d5dac`. The metadata-only `21750c88407f9635c9ff500604b9cf4d29fc21c4`
+commit tags `v0.2.0`; both native release workflows passed, and all eight uploaded
+assets were downloaded and checked against their hashes. All three desktop
+manifests name version 0.2.0 and this clean tagged source. Release audit records
+and the tagged-source debug retry are retained under the ignored
+`dist/releases/v0.2.0/` evidence directory.
+
+The following visual batch prioritizes terminal text and application-supplied
+syntax colors. Defaults become 15 px text, 1.25 line height and 12 px padding,
+with finite bounded configuration values and preserved font preferences. Neutral
+surfaces unify dock chrome and terminal backgrounds; brighter ANSI comments and
+white text improve contrast. The renderer now applies dim, inverse and concealed
+styles and honors indexed palette overrides while preserving explicit true color.
+Extra leading is centered once rather than once by Rumux and again by GPUI.
+A regression parses real SGR sequences and checks styled foreground/background
+layout; another covers indexed override/reset without changing true color.
+
+The batch passed 143 workspace tests and 28 doctests on macOS and Linux ARM64.
+Installed macOS suites passed 36/37 checks in 11.71/11.69 s; archive SHA-256
+`4620f9c0bd59afaeeb37408f1b5e3724ba93722b55fc53f7d924c8f2351b50aa`.
+Installed Linux suites passed 36/37 checks in 8.46/8.11 s; archive SHA-256
+`c212c57fd6f463183da400a58c125e2e33c21c8211ac00ddc28a697bc20d1019`.
+The frozen Linux source archive SHA-256 is
+`188e7447a7404ab2c5fe83d7eed938fb8cdd4e709406c32921045225900cbd41`.
+These manifests identify tagged base `21750c8` plus the dirty visual tree.
+Clippy, rustfmt and actionlint passed. Native screenshots in the ignored
+`dist/desktop/visual-review/` folder verify comment readability, normal/bold/
+italic/underline/dim/inverse text, true color, indexed color and Unicode samples.
+The owned UI bundle contains a profile wrapper, so any automatic UI-tool relaunch
+keeps the isolated configuration. Its service is explicitly stopped after review.
