@@ -39,18 +39,27 @@ Supported desktop release assets today:
 
 - `rumux-desktop-x86_64-unknown-linux-gnu.tar.gz`
 - `rumux-desktop-aarch64-apple-darwin.zip`
+- `rumux-desktop-x86_64-pc-windows-msvc.zip`
 - `rumux-desktop-checksums.txt`
 
 The desktop packages currently ship:
 
-- Linux: a release tarball with the `rumux-app` binary, desktop entry metadata, AppStream metadata, and branded icons
-- macOS: a zipped `rumux.app` bundle with branded app resources and icon plumbing suitable for direct download and testing
+- Linux: a release tarball with desktop and CLI binaries, a per-user installer, desktop/AppStream metadata and icons
+- macOS: a zipped `Rumux.app` bundle with desktop and CLI binaries, a per-user installer and icons
+- Windows: a zip with desktop and CLI binaries and a per-user PowerShell installer that adds a Start-menu shortcut and user PATH entry
+
+All desktop archives include source/version metadata, licenses, extracted-file
+checksums and installer integrity checks. The desktop release workflow runs the
+installed terminal/browser/SSH suite on every native platform before uploading
+assets to the draft. Verify all three package versions match the tag and their
+clean source commit matches the tagged commit before publishing. Wait for both
+release workflows to finish before making the release public.
 
 They do not yet provide native signing, notarization, DMG generation, MSI packaging, or Linux distro-specific packages.
 
 ## 4. Tag and Publish
 
-- Create a git tag like `v0.1.0`
+- Create a git tag matching the workspace version, such as `v0.2.0`
 - Push the tag
 - Let the `Release CLI` workflow attach CLI binaries and checksums to the draft release
 - Let the `Release Desktop` workflow attach desktop artifacts and checksums to the same draft release

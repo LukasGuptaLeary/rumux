@@ -4,6 +4,8 @@ All notable changes to this project should be recorded in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-11
+
 ### Added
 
 - Native browser tabs/splits with navigation, DOM snapshots, JavaScript and form automation

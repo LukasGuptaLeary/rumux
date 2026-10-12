@@ -30,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/LukasGuptaLeary/rumux/main/install.
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LukasGuptaLeary/rumux/main/install.sh | sh -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/LukasGuptaLeary/rumux/main/install.sh | sh -s -- --version v0.2.0
 ```
 
 Source install fallback:
@@ -70,7 +70,7 @@ Desktop packages:
 - `rumux-desktop-x86_64-pc-windows-msvc.zip`
 - `rumux-desktop-checksums.txt`
 
-The completion branch packages the desktop and CLI together, with icons,
+The [v0.2.0 release](https://github.com/LukasGuptaLeary/rumux/releases/tag/v0.2.0) packages the desktop and CLI together, with icons,
 licenses, source metadata and checksums. Download a matching desktop archive
 and `rumux-desktop-checksums.txt`, verify its checksum and extract it. From the
 extracted package directory, install for your user:
@@ -91,8 +91,8 @@ The installers verify the extracted files before installation. Close the
 desktop and run `rumux session stop` before replacing running binaries. Config
 and history live separately from the installation. Bundles are unsigned;
 macOS notarization, Windows signing and distro-specific packages remain future
-distribution work. The existing `v0.1.0` release contains CLI assets only; these
-desktop packages require a future qualified release.
+distribution work. Desktop installers for macOS, Linux and Windows ship in
+`v0.2.0`; the older `v0.1.0` release contains CLI assets only.
 
 The macOS bundle requires macOS 14 or newer. Windows requires DirectX 11,
 WebView2 Runtime and the latest
